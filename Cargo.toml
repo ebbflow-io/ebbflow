@@ -1,0 +1,26 @@
+[package]
+name = "ebb-client"
+version = "0.1.0"
+authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# rustls = "0.16.0"
+futures-preview = "=0.3.0-alpha.18"
+futures-rustls = "=0.12.0-alpha"
+log = "=0.4.8"
+env_logger = "=0.6.2"
+async-std = "0.99"
+rand = "0.7.0"
+
+# ignore-result = "0.2.0"
+# futures-timer = "0.3.0"
+
+[dependencies.runtime]
+git = "https://github.com/rustasync/runtime"
+
+[dev-dependencies]
+hyper = "0.13.0-alpha.1"
+tokio = "0.2.0-alpha.4"
