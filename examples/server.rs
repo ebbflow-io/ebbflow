@@ -2,9 +2,9 @@
 extern crate log;
 extern crate env_logger;
 
-use log::LevelFilter;
-use hyper::{Body, Error, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Error, Response, Server};
+use log::LevelFilter;
 
 #[tokio::main]
 async fn main() {
@@ -14,16 +14,19 @@ async fn main() {
     let addr = ([127, 0, 0, 1], 8080).into();
 
     // And a MakeService to  handle each connection...
-    let make_service = make_service_fn(|_| async {
-        Ok::<_, Error>(service_fn(|_req| async {
-            info!("Received request, returning response");
-            Ok::<_, Error>(Response::new(Body::from("Hello World\n")))
-        }))
+    let make_service = make_service_fn(|_| {
+        async {
+            Ok::<_, Error>(service_fn(|_req| {
+                async {
+                    info!("Received request, returning response");
+                    Ok::<_, Error>(Response::new(Body::from("Hello World\n")))
+                }
+            }))
+        }
     });
 
     // Then bind and serve...
-    let server = Server::bind(&addr)
-        .serve(make_service);
+    let server = Server::bind(&addr).serve(make_service);
 
     // Finally, spawn `server` onto an Executor...
     info!("Spawning server on 8080..");
