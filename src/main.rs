@@ -102,7 +102,8 @@ async fn main() {
         tokio::spawn(loopy(server_addr, server_dns.clone(), c, local_addr));
     }
 
-    async_std::task::sleep(Duration::from_secs(60 * 60 * 60)).await;
+    //async_std::task::sleep(Duration::from_secs(60 * 60 * 60)).await;
+    tokio::future::pending::<()>().await;
 }
 
 #[derive(Debug)]
