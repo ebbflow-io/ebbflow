@@ -80,7 +80,7 @@ async fn main() {
         .expect("Unable to parse DNS name")
         .to_owned();
 
-    env_logger::builder().filter_level(LevelFilter::Debug).init();
+    env_logger::builder().filter_level(LevelFilter::Warn).init();
 
     let server_addr = "34.210.53.235:7070"
         .parse()
@@ -165,6 +165,7 @@ async fn connect_ebbflow(
 ) -> Result<(Reader, Writer), ConnError> {
     let stream = TcpStream::connect(addr).await?;
     stream.set_keepalive(Some(Duration::from_secs(1)))?;
+    stream.set_nodelay(true)?;
 
     let connector = TlsConnector::from(cfg);
     let tlsstream = connector.connect(dns, stream).await?;
@@ -192,6 +193,7 @@ fn dyner_ws(writehalf: WriteHalf<TcpStream>) -> Writer {
 async fn connect_local(addr: SocketAddr) -> Result<(Reader, Writer), ConnError> {
     let tcpstream = TcpStream::connect(addr).await?;
     tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
+    tcpstream.set_nodelay(true)?;
 
     debug!("A connection has been established to the local server");
 
@@ -208,6 +210,7 @@ async fn proxy(
 ) -> Result<(), ConnError> {
     let s2c = sr.copy(&mut cw);
     let c2s = cr.copy(&mut sw);
+    warn!("A proxied connection has been established between the two parties");
 
     match select(s2c, c2s).await {
         Either::Left((_server_read_res, _c2s_future)) => debug!("Server reader finished first"),
