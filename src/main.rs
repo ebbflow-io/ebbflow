@@ -2,21 +2,19 @@
 extern crate log;
 extern crate env_logger;
 
-use async_std::future::pending;
-use async_std::net::TcpStream;
-use async_std::prelude::*;
-use clap::{App, Arg, SubCommand, value_t};
+use tokio::net::TcpStream;
+use tokio::io::split;
+use clap::{App, Arg, value_t};
 use futures::future::select;
 use futures::future::Either;
-use futures::io::{AsyncReadExt, AsyncWriteExt};
-use futures::io::{ReadHalf, WriteHalf};
-use futures::prelude::*;
-use futures_rustls::client::TlsStream as ClientTlsStream;
-use futures_rustls::rustls::{ClientConfig, ServerConfig, ServerSession, Session, RootCertStore};
-use futures_rustls::server::TlsStream as ServerTlsStream;
-use futures_rustls::webpki::DNSName;
-use futures_rustls::webpki::DNSNameRef;
-use futures_rustls::{TlsAcceptor, TlsConnector};
+// use futures::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_io::split::{ReadHalf, WriteHalf};
+use tokio::prelude::*;
+use tokio_rustls::client::TlsStream as ClientTlsStream;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::webpki::DNSName;
+use tokio_rustls::webpki::DNSNameRef;
+use tokio_rustls::TlsConnector;
 use log::LevelFilter;
 use std::io::Error as IoError;
 use std::net::SocketAddr;
@@ -26,7 +24,6 @@ use std::time::Duration;
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
 type Clizzle = ClientTlsStream<TcpStream>; // Sick of typing it
-type ReaderWriter = Box<dyn ReaderWriterTrait + Unpin + Send>;
 
 trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 
@@ -167,13 +164,14 @@ async fn connect_ebbflow(
     cfg: Arc<ClientConfig>,
 ) -> Result<(Reader, Writer), ConnError> {
     let stream = TcpStream::connect(addr).await?;
+    stream.set_keepalive(Some(Duration::from_secs(1)))?;
 
     let connector = TlsConnector::from(cfg);
-    let tcpstream = connector.connect(dns, stream).await?;
+    let tlsstream = connector.connect(dns, stream).await?;
 
     debug!("A connection has been established to ebbflow");
 
-    let (r, w) = tcpstream.split();
+    let (r, w) = split(tlsstream);
 
     Ok((dyner_r(r), dyner_w(w)))
 }
@@ -193,10 +191,11 @@ fn dyner_ws(writehalf: WriteHalf<TcpStream>) -> Writer {
 
 async fn connect_local(addr: SocketAddr) -> Result<(Reader, Writer), ConnError> {
     let tcpstream = TcpStream::connect(addr).await?;
+    tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
 
     debug!("A connection has been established to the local server");
 
-    let (r, w) = tcpstream.split();
+    let (r, w) = split(tcpstream);
 
     Ok((dyner_rs(r), dyner_ws(w)))
 }
@@ -207,12 +206,12 @@ async fn proxy(
     mut cr: Reader,
     mut cw: Writer,
 ) -> Result<(), ConnError> {
-    let s2c = sr.copy_into(&mut cw);
-    let c2s = cr.copy_into(&mut sw);
+    let s2c = sr.copy(&mut cw);
+    let c2s = cr.copy(&mut sw);
 
     match select(s2c, c2s).await {
-        Either::Left((server_read_res, c2s_future)) => {}
-        Either::Right((client_read_res, s2c_future)) => {}
+        Either::Left((_server_read_res, _c2s_future)) => debug!("Server reader finished first"),
+        Either::Right((_client_read_res, _s2c_future)) => debug!("Client reader finished first"),
     }
 
     debug!("A proxied connection has terminated");
@@ -223,23 +222,23 @@ async fn proxy(
 use std::fs;
 use std::io::BufReader;
 
-pub fn load_certs(filename: &str) -> Vec<futures_rustls::rustls::Certificate> {
+pub fn load_certs(filename: &str) -> Vec<tokio_rustls::rustls::Certificate> {
     let certfile = fs::File::open(filename).expect("cannot open certificate file");
     let mut reader = BufReader::new(certfile);
-    futures_rustls::rustls::internal::pemfile::certs(&mut reader).unwrap()
+    tokio_rustls::rustls::internal::pemfile::certs(&mut reader).unwrap()
 }
-pub fn load_private_key(filename: &str) -> futures_rustls::rustls::PrivateKey {
+pub fn load_private_key(filename: &str) -> tokio_rustls::rustls::PrivateKey {
     let rsa_keys = {
         let keyfile = fs::File::open(filename).expect("cannot open private key file");
         let mut reader = BufReader::new(keyfile);
-        futures_rustls::rustls::internal::pemfile::rsa_private_keys(&mut reader)
+        tokio_rustls::rustls::internal::pemfile::rsa_private_keys(&mut reader)
             .expect("file contains invalid rsa private key")
     };
 
     let pkcs8_keys = {
         let keyfile = fs::File::open(filename).expect("cannot open private key file");
         let mut reader = BufReader::new(keyfile);
-        futures_rustls::rustls::internal::pemfile::pkcs8_private_keys(&mut reader)
+        tokio_rustls::rustls::internal::pemfile::pkcs8_private_keys(&mut reader)
             .expect("file contains invalid pkcs8 private key (encrypted keys not supported)")
     };
 

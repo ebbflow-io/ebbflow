@@ -7,15 +7,18 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# rustls = "0.16.0"
-futures-preview = "=0.3.0-alpha.18"
-futures-rustls = "=0.12.0-alpha"
+futures-preview = "=0.3.0-alpha.19"
+tokio-rustls = "0.12.0-alpha.4"
 log = "=0.4.8"
 env_logger = "=0.6.2"
-async-std = "0.99"
 rand = "0.7.0"
 clap = "2.33.0"
-tokio = "0.2.0-alpha.4"
+tokio = "0.2.0-alpha.6"
+tokio-io = "=0.2.0-alpha.6"
 
 [dev-dependencies]
 hyper = "0.13.0-alpha.1"
+
+[dependencies.async-std]                                                                                                
+git = "https://github.com/async-rs/async-std"                                                                           
+rev = "98c79f4"        
