@@ -2,24 +2,25 @@
 extern crate log;
 extern crate env_logger;
 
-use tokio::net::TcpStream;
-use tokio::io::split;
-use clap::{App, Arg, value_t};
+use clap::{value_t, App, Arg};
 use futures::future::select;
 use futures::future::Either;
+use tokio::io::split;
+use tokio::net::TcpStream;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_io::split::{ReadHalf, WriteHalf};
+use log::LevelFilter;
+use rustls::DangerousWebPKIVerifierPinnedDNS;
+use std::io::Error as IoError;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::prelude::*;
+use tokio_io::split::{ReadHalf, WriteHalf};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
-use log::LevelFilter;
-use std::io::Error as IoError;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
@@ -30,57 +31,99 @@ trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 const CONN_LOOP_SLEEP: u64 = 1000;
 
 const PORT: &'static str = "PORT";
+const ADDR: &'static str = "ADDR";
 const KEY: &'static str = "KEY";
 const CRT: &'static str = "CRT";
 const DNS: &'static str = "DNS";
+const NCONNS: &'static str = "NCONNS";
+const DEFAULT_NCONNS: usize = 10;
+const DEFAULT_ADDR: &'static str = "0.0.0.0";
 
 #[tokio::main]
 async fn main() {
     let matches = App::new("Ebbflow Client")
         .version("0.1")
         .about("Proxies ebbflow connections to your service")
-        .arg(Arg::with_name(PORT)
-            .short("p")
-            .long("local-port")
-            .value_name("PORT")
-            .help("The local port to proxy requests to e.g. 0.0.0.0:PORT")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name(KEY)
-            .short("k")
-            .long("key")
-            .value_name("KEY")
-            .help("Path to file of client key for authenticating with Ebbflow")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name(CRT)
-            .short("c")
-            .long("cert")
-            .value_name("CERT")
-            .help("Path to file of client cert for authenticating with Ebbflow")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name(DNS)
-            .short("dns")
-            .long("dns")
-            .value_name("DNS")
-            .help("The DNS entry of your endpoint, e.g. myawesomesite.com")
-            .takes_value(true)
-            .required(true))
+        .arg(
+            Arg::with_name(ADDR)
+                .short("a")
+                .long("local-addr")
+                .value_name("ADDR")
+                .help("The local ADDR to proxy requests to e.g. ADDR:PORT (defaults to 0.0.0.0)")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name(PORT)
+                .short("p")
+                .long("local-port")
+                .value_name("PORT")
+                .help("The local PORT to proxy requests to e.g. ADDR:PORT")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name(KEY)
+                .short("k")
+                .long("key")
+                .value_name("KEY")
+                .help("Path to file of client key for authenticating with Ebbflow")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name(CRT)
+                .short("c")
+                .long("cert")
+                .value_name("CERT")
+                .help("Path to file of client cert for authenticating with Ebbflow")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name(DNS)
+                .short("d")
+                .long("dns")
+                .value_name("DNS")
+                .help("The DNS entry of your endpoint, e.g. myawesomesite.com")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name(NCONNS)
+                .long("numconns")
+                .value_name("NUM")
+                .help("The number of connections (default 10)")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("v")
+                .short("v")
+                .multiple(true)
+                .help("Sets the level of verbosity"),
+        )
         .get_matches();
-    println!("{:#?}", matches);
 
     let key = matches.value_of(KEY).expect("must provide key");
     let crt = matches.value_of(CRT).expect("must provide cert");
+    let addr = matches.value_of(ADDR).unwrap_or(DEFAULT_ADDR);
+    let nconns = value_t!(matches, NCONNS, usize).unwrap_or(DEFAULT_NCONNS);
     let port = value_t!(matches, PORT, usize).unwrap_or_else(|e| e.exit());
-    let local_addr = format!("127.0.0.1:{}", port)
+    let local_addr = format!("{}:{}", addr, port)
         .parse()
         .expect("Unable to parse local address");
-    let server_dns = DNSNameRef::try_from_ascii_str(matches.value_of(DNS).expect("must provide dns"))
-        .expect("Unable to parse DNS name")
-        .to_owned();
+    let server_dns =
+        DNSNameRef::try_from_ascii_str(matches.value_of(DNS).expect("must provide dns"))
+            .expect("Unable to parse DNS name")
+            .to_owned();
 
-    env_logger::builder().filter_level(LevelFilter::Warn).init();
+    let level = match matches.occurrences_of("v") {
+        0 => LevelFilter::Warn,
+        1 => LevelFilter::Info,
+        2 => LevelFilter::Debug,
+        3 | _ => LevelFilter::Trace,
+    };
+
+    env_logger::builder().filter_level(level).init();
 
     let server_addr = "34.210.53.235:7070"
         .parse()
@@ -88,13 +131,15 @@ async fn main() {
 
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = ca();
-    ccfg.set_single_client_cert(
-        load_certs(crt),
-        load_private_key(key),
-    );
+    ccfg.set_single_client_cert(load_certs(crt), load_private_key(key));
+
+    let verifier = DangerousWebPKIVerifierPinnedDNS::new(ebbflow_dns());
+    let mut d = ccfg.dangerous();
+    d.set_certificate_verifier(Arc::new(verifier));
+
     let server_client_config = Arc::new(ccfg);
 
-    for i in 0..3 {
+    for _i in 0..nconns {
         let c = server_client_config.clone();
         tokio::spawn(loopy(server_addr, server_dns.clone(), c, local_addr));
     }
@@ -121,17 +166,17 @@ async fn loopy(
     local_addr: SocketAddr,
 ) {
     loop {
-        if let Err(e) = connection(
+        if let Err((msg, e)) = connection(
             server_addr,
             server_dns.as_ref(),
             server_client_config.clone(),
             local_addr,
         )
-            .await
+        .await
         {
-            warn!("Error from connection {:?}", e);
+            warn!("{}: {:?}", msg, e);
         }
-        info!(
+        debug!(
             "Looping connection; Sleeping for {} millis before establishing a new connection",
             CONN_LOOP_SLEEP
         );
@@ -144,18 +189,22 @@ async fn connection(
     server_dns: DNSNameRef<'_>,
     server_client_config: Arc<ClientConfig>,
     local_addr: SocketAddr,
-) -> Result<(), ConnError> {
+) -> Result<(), (&'static str, ConnError)> {
     // Get a connection to local
     debug!("Connecting to local addr");
-    let (cr, cw) = connect_local(local_addr).await?;
+    let (cr, cw) = connect_local(local_addr)
+        .await
+        .map_err(|e| ("Error establishing local connection", e))?;
 
     // Get a connection to Ebbflow
     debug!("Connecting to ebbflow");
-    let (sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config).await?;
+    let (sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config)
+        .await
+        .map_err(|e| ("Error establishing connection with Ebbflow", e))?;
 
     // Serve
     debug!("Proxying connection");
-    proxy(sr, sw, cr, cw).await
+    proxy(sr, sw, cr, cw).await.map_err(|e| ("sadf", e))
 }
 
 async fn connect_ebbflow(
@@ -210,7 +259,7 @@ async fn proxy(
 ) -> Result<(), ConnError> {
     let s2c = sr.copy(&mut cw);
     let c2s = cr.copy(&mut sw);
-    warn!("A proxied connection has been established between the two parties");
+    debug!("A proxied connection has been established between the two parties");
 
     match select(s2c, c2s).await {
         Either::Left((_server_read_res, _c2s_future)) => debug!("Server reader finished first"),
@@ -274,9 +323,18 @@ TvOO8QcYeTpsDjDZCtZrVCFhDJ4L7rvjgu0MjfY5ZTmo20EK3+53hDCWXRPytMsn
 900+RQ70WSIHB7I633C9NFHVDWmRJh/TN7pvtp2lDELs6HbVNL/4/0+Q1Ost8VsZ
 mwjQfTXKWLjWGhREmHMrEAIBI0k=
 -----END CERTIFICATE-----
-".to_string();
+"
+    .to_string();
     let mut crt = crt.as_bytes();
     let mut store = RootCertStore::empty();
-    store.add_pem_file(&mut crt).expect("should be able to parse CA crt");
     store
+        .add_pem_file(&mut crt)
+        .expect("should be able to parse CA crt");
+    store
+}
+
+fn ebbflow_dns() -> DNSName {
+    DNSNameRef::try_from_ascii_str("ebbflow.io")
+        .expect("should be able to parse ebbflow domain")
+        .to_owned()
 }

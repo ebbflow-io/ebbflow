@@ -8,13 +8,18 @@ edition = "2018"
 
 [dependencies]
 futures-preview = "=0.3.0-alpha.19"
-tokio-rustls = "0.12.0-alpha.4"
+#tokio-rustls = "0.12.0-alpha.4"
+tokio-rustls = { path = "../tokio-rustls" }
 log = "=0.4.8"
 env_logger = "=0.6.2"
 rand = "0.7.0"
 clap = "2.33.0"
 tokio = "0.2.0-alpha.6"
 tokio-io = "=0.2.0-alpha.6"
+
+[dependencies.rustls]
+path = "../rustls/rustls"
+features = ["dangerous_configuration"]
 
 [dev-dependencies]
 hyper = "0.13.0-alpha.1"
