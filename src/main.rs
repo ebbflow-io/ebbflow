@@ -9,7 +9,7 @@ use tokio::io::split;
 use tokio::net::TcpStream;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
 use log::LevelFilter;
-use rustls::DangerousWebPKIVerifierPinnedDNS;
+//use rustls::DangerousWebPKIVerifierPinnedDNS;
 use std::io::Error as IoError;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
+use rustls::{ServerCertVerifier, ServerCertVerified, Certificate, WebPKIVerifier, TLSError};
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
@@ -133,7 +134,7 @@ async fn main() {
     ccfg.root_store = ca();
     ccfg.set_single_client_cert(load_certs(crt), load_private_key(key));
 
-    let verifier = DangerousWebPKIVerifierPinnedDNS::new(ebbflow_dns());
+    let verifier = Verifier::new();
     let mut d = ccfg.dangerous();
     d.set_certificate_verifier(Arc::new(verifier));
 
@@ -143,9 +144,32 @@ async fn main() {
         let c = server_client_config.clone();
         tokio::spawn(loopy(server_addr, server_dns.clone(), c, local_addr));
     }
-
     //async_std::task::sleep(Duration::from_secs(60 * 60 * 60)).await;
     tokio::future::pending::<()>().await;
+}
+
+struct Verifier {
+    inner: WebPKIVerifier,
+    dns: DNSName,
+}
+
+impl Verifier {
+    fn new() -> Self {
+        Self {
+            inner: WebPKIVerifier::new(),
+            dns: ebbflow_dns(),
+        }
+    }
+}
+
+impl ServerCertVerifier for Verifier {
+    fn verify_server_cert(&self,
+                          roots: &RootCertStore,
+                          presented_certs: &[Certificate],
+                          _dns_name: DNSNameRef,
+                          ocsp_response: &[u8]) -> Result<ServerCertVerified, TLSError> {
+        self.inner.verify_server_cert(roots, presented_certs, self.dns.as_ref(), ocsp_response)
+    }
 }
 
 #[derive(Debug)]

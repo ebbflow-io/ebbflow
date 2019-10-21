@@ -19,7 +19,7 @@ async fn main() {
             Ok::<_, Error>(service_fn(|_req| {
                 async {
                     info!("Received request, returning response");
-                    Ok::<_, Error>(Response::new(Body::from("Hello ERin\n")))
+                    Ok::<_, Error>(Response::new(Body::from(format!("Hello, World! Hostname: {}\n", hostname::get_hostname().unwrap()))))
                 }
             }))
         }
