@@ -8,24 +8,24 @@ edition = "2018"
 
 [dependencies]
 futures-preview = "=0.3.0-alpha.19"
-#tokio-rustls = "0.12.0-alpha.4"
-tokio-rustls = { path = "../tokio-rustls" }
+tokio-rustls = "0.12.0-alpha.4"
+#tokio-rustls = { path = "../tokio-rustls" }
 log = "=0.4.8"
+rand = "0.7.2"
 env_logger = "=0.6.2"
-rand = "0.7.0"
 clap = "2.33.0"
 tokio = "0.2.0-alpha.6"
 tokio-io = "=0.2.0-alpha.6"
 
 [dependencies.rustls]
-#version = "0.16"
-path = "../rustls/rustls"
-features = ["dangerous_configuration"]
+version = "0.16"
+#path = "../rustls/rustls"
+#features = ["dangerous_configuration"]
 
 [dev-dependencies]
 hyper = "0.13.0-alpha.1"
 hostname = "0.1.5"
 
-[dependencies.async-std]                                                                                                
-git = "https://github.com/async-rs/async-std"                                                                           
-rev = "98c79f4"        
+[dependencies.async-std]
+git = "https://github.com/async-rs/async-std"
+rev = "98c79f4"
