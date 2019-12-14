@@ -5,15 +5,15 @@ extern crate env_logger;
 use clap::{value_t, App, Arg};
 use futures::future::select;
 use futures::future::Either;
-use tokio::io::split;
-use tokio::net::TcpStream;
 use log::LevelFilter;
 use std::io::Error as IoError;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::split;
+use tokio::io::{ReadHalf, WriteHalf};
+use tokio::net::TcpStream;
 use tokio::prelude::*;
-use tokio_io::split::{ReadHalf, WriteHalf};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
@@ -132,7 +132,7 @@ async fn main() {
         tokio::spawn(loopy(server_dns.clone(), c, local_addr));
     }
     //async_std::task::sleep(Duration::from_secs(60 * 60 * 60)).await;
-    tokio::future::pending::<()>().await;
+    futures::future::pending::<()>().await;
 }
 
 #[derive(Debug)]
@@ -149,7 +149,7 @@ impl From<IoError> for ConnError {
 fn server_addr() -> SocketAddr {
     if rand::random() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(75, 2, 123, 22)), 7070)
-        //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
+    //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
     } else {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(99, 83, 172, 111)), 7070)
         //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
@@ -176,7 +176,7 @@ async fn loopy(
             "Looping connection; Sleeping for {} millis before establishing a new connection",
             CONN_LOOP_SLEEP
         );
-        async_std::task::sleep(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+        tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
     }
 }
 
@@ -253,8 +253,8 @@ async fn proxy(
     mut cr: Reader,
     mut cw: Writer,
 ) -> Result<(), ConnError> {
-    let s2c = sr.copy(&mut cw);
-    let c2s = cr.copy(&mut sw);
+    let s2c = tokio::io::copy(&mut sr, &mut cw);
+    let c2s = tokio::io::copy(&mut cr, &mut sw);
     debug!("A proxied connection has been established between the two parties");
 
     match select(s2c, c2s).await {
@@ -334,7 +334,7 @@ zeUN2bgHVJOi+EMEWaDsB46kIIPe8Xd5DUAsela/VnnNM2vq+XoGL7JQ07KEQ2ra
 HKu8C84BimvdPjPrLhfIGBdk6gh3JeSJljCMn7JFZj5U9UgGpNPqFCi3oRw2T4yY
 LkLFN9PcG2yzhHNkiW/U9sDY9At/N8nNdw==
 -----END CERTIFICATE-----"
-    .to_string();
+        .to_string();
     let mut crt = crt.as_bytes();
     let mut store = RootCertStore::empty();
     store
