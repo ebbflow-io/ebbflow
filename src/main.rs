@@ -33,7 +33,7 @@ const KEY: &'static str = "KEY";
 const CRT: &'static str = "CRT";
 const DNS: &'static str = "DNS";
 const NCONNS: &'static str = "NCONNS";
-const DEFAULT_NCONNS: usize = 10;
+const DEFAULT_NCONNS: usize = 1;
 const DEFAULT_ADDR: &'static str = "0.0.0.0";
 
 #[tokio::main]
@@ -89,7 +89,7 @@ async fn main() {
             Arg::with_name(NCONNS)
                 .long("numconns")
                 .value_name("NUM")
-                .help("The number of connections (default 10)")
+                .help("The number of connections (default 1 (!!1!!!1!one!!))")
                 .takes_value(true),
         )
         .arg(
