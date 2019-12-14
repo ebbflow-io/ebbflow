@@ -2,7 +2,7 @@
 
 **NOTE** This is `Beta` quality as of now, and could use some more features and configurable settings!
 
-This is the end-host client for `[ebbflow](https://ebbflow.io)`. This is used to serve your endpoint by proxying connections between ebbflow and your webserver. 
+This is the end-host client for [`ebbflow`](https://ebbflow.io). This is used to serve your endpoint by proxying connections between ebbflow and your webserver. 
 
 ```
 ebb-client -c CERTFILE -k KEYFILE -p PORT --dns YOURWEBSITE.COM
