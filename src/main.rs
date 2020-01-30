@@ -1,12 +1,15 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-
+#[macro_use]
+extern crate clap;
 use clap::{value_t, App, Arg};
 use futures::future::select;
 use futures::future::Either;
 use log::LevelFilter;
+use std::env;
 use std::io::Error as IoError;
+use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +22,7 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
@@ -27,112 +31,230 @@ type Clizzle = ClientTlsStream<TcpStream>; // Sick of typing it
 trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 
 const CONN_LOOP_SLEEP: u64 = 1000;
-const PORT: &'static str = "PORT";
-const ADDR: &'static str = "ADDR";
-const KEY: &'static str = "KEY";
-const CRT: &'static str = "CRT";
-const DNS: &'static str = "DNS";
-const NCONNS: &'static str = "NCONNS";
+const PORT: &'static str = "port";
+const ADDR: &'static str = "local-addr";
+const KEY: &'static str = "key";
+const CRT: &'static str = "cert";
+const DNS: &'static str = "dns";
+const NCONNS: &'static str = "max-conns";
 const DEFAULT_NCONNS: usize = 1;
 const DEFAULT_ADDR: &'static str = "0.0.0.0";
+
+arg_enum! {
+    #[derive(Debug)]
+    enum Modes {
+        tcp,
+        ssh,
+    }
+}
+
+
+#[derive(Debug)]
+struct MyError {
+
+}
+impl std::error::Error for MyError {}
+impl std::fmt::Display for MyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(asdfa)")
+    }
+}
 
 #[tokio::main]
 async fn main() {
     let matches = App::new("Ebbflow Client")
-        .version("0.1")
-        .about("Proxies ebbflow connections to your service")
-        .arg(
-            Arg::with_name(ADDR)
-                .short("a")
-                .long("local-addr")
-                .value_name("ADDR")
-                .help("The local ADDR to proxy requests to e.g. ADDR:PORT (defaults to 0.0.0.0)")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name(PORT)
-                .short("p")
-                .long("local-port")
-                .value_name("PORT")
-                .help("The local PORT to proxy requests to e.g. ADDR:PORT")
-                .takes_value(true)
-                .required(true),
-        )
+        .version("0.2")
+        .setting(clap::AppSettings::SubcommandRequired)
+        .setting(clap::AppSettings::VersionlessSubcommands)
+        .about("\nProxies ebbflow connections to your service. Environment variables can be used instead of options, see documentation online.")
         .arg(
             Arg::with_name(KEY)
                 .short("k")
                 .long("key")
                 .value_name("KEY")
+                .global(true)
                 .help("Path to file of client key for authenticating with Ebbflow")
                 .takes_value(true)
-                .required(true),
         )
         .arg(
             Arg::with_name(CRT)
                 .short("c")
                 .long("cert")
                 .value_name("CERT")
+                .global(true)
                 .help("Path to file of client cert for authenticating with Ebbflow")
                 .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name(DNS)
-                .short("d")
-                .long("dns")
-                .value_name("DNS")
-                .help("The DNS entry of your endpoint, e.g. myawesomesite.com")
-                .takes_value(true)
-                .required(true),
         )
         .arg(
             Arg::with_name(NCONNS)
-                .long("numconns")
+                .short("m")
+                .long("max-conns")
                 .value_name("NUM")
-                .help("The number of connections (default 1 (!!1!!!1!one!!))")
+                .global(true)
+                .help("The maximum number of connections (default 1)")
                 .takes_value(true),
         )
         .arg(
             Arg::with_name("v")
                 .short("v")
+                .global(true)
                 .multiple(true)
-                .help("Sets the level of verbosity"),
+                .help("Sets the level of verbosity (add v's for more logging, e.g. -vvv)"),
+        )
+        .subcommand(
+            App::new("tcp")
+                .about("use as TCP Proxy mode")
+                .arg(Arg::with_name(DNS)
+                            .short("d")
+                            .long("dns")
+                            .value_name("DNS")
+                            .help("The DNS entry of your endpoint, e.g. myawesomesite.com")
+                            .takes_value(true)
+                )
+                .arg(
+                    Arg::with_name(ADDR)
+                        .short("a")
+                        .long("local-addr")
+                        .value_name("ADDR")
+                        .help("The local ADDR to proxy to (defaults to 0.0.0.0)")
+                )
+                .arg(
+                    Arg::with_name(PORT)
+                        .short("p")
+                        .long("local-port")
+                        .value_name("PORT")
+                        .help("The local PORT to proxy requests to e.g. 8080")
+                        .takes_value(true)
+                )
+        )
+        .subcommand(
+            App::new("ssh")
+                .about("use as SSH proxy mode")
+                .arg(
+                    Arg::with_name("accountid")
+                        .long("accountid")
+                        .takes_value(true)
+                        .help("The account id, needed if using SSH (e.g. 13d19a)"),
+                )
+                .arg(
+                    Arg::with_name("hostname")
+                        .long("hostname")
+                        .takes_value(true)
+                        .help("The hostname to be accessible by, defaults to server's hostname"),
+                )
         )
         .get_matches();
 
-    let key = matches.value_of(KEY).expect("must provide key");
-    let crt = matches.value_of(CRT).expect("must provide cert");
-    let addr = matches.value_of(ADDR).unwrap_or(DEFAULT_ADDR);
-    let nconns = value_t!(matches, NCONNS, usize).unwrap_or(DEFAULT_NCONNS);
-    let port = value_t!(matches, PORT, usize).unwrap_or_else(|e| e.exit());
-    let local_addr = format!("{}:{}", addr, port)
-        .parse()
-        .expect("Unable to parse local address");
-    let server_dns =
-        DNSNameRef::try_from_ascii_str(matches.value_of(DNS).expect("must provide dns"))
-            .expect("Unable to parse DNS name")
-            .to_owned();
+    let (dns, localaddr) = match matches.subcommand() {
+        ("tcp", Some(tcp_matches)) => {
+            let raw_dns : String = tcp_matches.value_of(DNS).map(|x| x.to_string()).unwrap_or_else(|| env::var("EBB_DNS").map_err(|_| fail("Must provide dns, or EBB_DNS env var")).unwrap());
+            let server_dns =
+                DNSNameRef::try_from_ascii_str(&raw_dns)
+                    .map_err(|_| fail("Unable to parse DNS name"))
+                    .unwrap()
+                    .to_owned();
+            let addr = tcp_matches.value_of(ADDR).map(|x| x.to_string()).unwrap_or_else(|| env::var("EBB_ADDR").unwrap_or(DEFAULT_ADDR.to_string()));
+            let port = value_t!(tcp_matches, PORT, usize).unwrap_or_else(|_| {
+                match env::var("EBB_PORT") {
+                    Ok(s) => {
+                        if s == "" {
+                            fail("Must provide --local-port or EBB_PORT to ebbflow");
+                        } else {
+                            s.parse()
+                                .map_err(|_| fail("cannot parse EBB_CONNS value to a number"))
+                                .unwrap()
+                        }
+                    }
+                    Err(_e) => fail("Must provide --port or EBB_PORT to ebbflow"),
+                }
+            });
+        
+            let local_addr = format!("{}:{}", addr, port)
+                .parse()
+                .map_err(|_| fail("Unable to parse local address"))
+                .unwrap();
+            (server_dns, local_addr)
+        }
+        ("ssh", Some(ssh_matches)) => {
+            let raw_hostname : String = get_var_string(&ssh_matches, "hostname", "EBB_HOST", None, false).unwrap_or_else(|| {
+                hostname::get()
+                    .map_err(|_| fail("failed retrieving the hostname from the OS"))
+                    .unwrap()
+                    .into_string()
+                    .map_err(|_| fail("failed to parse OS hostname"))
+                    .unwrap()
+            });
+            let account_id : String = get_var_string(&ssh_matches, "accountid", "EBB_ACCOUNTID", None, true).unwrap();
 
+            let hostname = format!("{}.{}.ebbflowssh", raw_hostname, account_id);
+            let dns = DNSNameRef::try_from_ascii_str(&hostname)
+                .map_err(|_| fail("Unable to parse DNS name"))
+                .unwrap()
+                .to_owned();
+            (dns, SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 22))
+        }
+        _ => fail("Logic error in client, unreachable state (unrecognized subcommand)"),
+    };
+
+    // GET GLOBAL ARGS
+    let key : String = get_var_string(&matches, KEY, "EBB_KEY", None, true).unwrap();
+    let crt : String = get_var_string(&matches, CRT, "EBB_CRT", None, true).unwrap();
+    let max_conns = value_t!(matches, NCONNS, usize).unwrap_or_else(|_| {
+        match env::var("EBB_CONNS") {
+            Ok(s) => {
+                if s == "" {
+                    DEFAULT_NCONNS
+                } else {
+                    s.parse().expect("cannot parse EBB_CONNS value to a number")
+                }
+            }
+            Err(_e) => DEFAULT_NCONNS,
+        }
+    });
     let level = match matches.occurrences_of("v") {
         0 => LevelFilter::Warn,
         1 => LevelFilter::Info,
         2 => LevelFilter::Debug,
         3 | _ => LevelFilter::Trace,
     };
+    let use_local_ebbflow = matches.is_present("localebbflow");
+
 
     env_logger::builder().filter_level(level).init();
-
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = ca();
-    ccfg.set_single_client_cert(load_certs(crt), load_private_key(key));
+    ccfg.set_single_client_cert(load_certs(&crt), load_private_key(&key));
     let server_client_config = Arc::new(ccfg);
 
-    for _i in 0..nconns {
-        let c = server_client_config.clone();
-        tokio::spawn(loopy(server_dns.clone(), c, local_addr));
+    loopy(dns, server_client_config, localaddr, server_addr(use_local_ebbflow), max_conns).await;
+}
+
+fn get_var_string(matches: &clap::ArgMatches, var_name: &str, env_var_name: &str, default: Option<String>, required: bool) -> Option<String> {
+    match matches.value_of(var_name) {
+        Some(s) => Some(s.to_string()),
+        None => {
+            match std::env::var(env_var_name) {
+                Ok(s) => Some(s),
+                Err(_) => {
+                    match default {
+                        Some(s) => Some(s),
+                        None => {
+                            if required {
+                                fail(&format!("Must provide --{} or {} environment variable", var_name, env_var_name));
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
-    //async_std::task::sleep(Duration::from_secs(60 * 60 * 60)).await;
-    futures::future::pending::<()>().await;
+}
+
+fn fail(s: &str) -> ! {
+    eprintln!("ERROR: {}", s);
+    std::process::exit(1);
 }
 
 #[derive(Debug)]
@@ -146,7 +268,10 @@ impl From<IoError> for ConnError {
     }
 }
 
-fn server_addr() -> SocketAddr {
+fn server_addr(ebbflow_override: bool) -> SocketAddr {
+    if ebbflow_override {
+        return SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 7070)
+    }
     if rand::random() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(75, 2, 123, 22)), 7070)
     //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
@@ -160,30 +285,70 @@ async fn loopy(
     server_dns: DNSName,
     server_client_config: Arc<ClientConfig>,
     local_addr: SocketAddr,
+    ebbflow_addr: SocketAddr,
+    max: usize,
 ) {
+    let active_conns = Arc::new(AtomicUsize::new(0));
     loop {
-        if let Err((msg, e)) = connection(
-            server_addr(),
+        let addr = local_addr.clone();
+        loop {
+            let active = active_conns.load(Ordering::SeqCst);
+            if active >= max {
+                debug!("We have more active connections ({}) than our max ({}), we will not establish another connection with ebbflow until that is done", active, max);
+                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+            } else {
+                debug!("We have less ({}) than our max ({}), we will continue", active, max);
+                break;
+            }
+        }
+
+        match wait_for_conn(
+            ebbflow_addr,
             server_dns.as_ref(),
             server_client_config.clone(),
-            local_addr,
-        )
-        .await
-        {
-            warn!("{}: {:?}", msg, e);
+        ).await {
+            Ok((r, w, i)) => {
+                let connscounter = active_conns.clone();
+                debug!("Got a connection from ebbflow");
+                tokio::spawn(async move {
+                    connscounter.fetch_add(1, Ordering::SeqCst);
+                    if let Err(e) = start_proxying_connection(r, w, i, addr).await {
+                        debug!("Existing connection terminated: {:?}", e);
+                    }
+                    connscounter.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+            Err((msg, e)) => {
+                debug!("Error waiting on an ebbflow connection");
+                warn!("{}: {:?}", msg, e);
+            }
         }
-        debug!(
-            "Looping connection; Sleeping for {} millis before establishing a new connection",
-            CONN_LOOP_SLEEP
-        );
-        tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
     }
 }
 
-async fn connection(
+async fn wait_for_conn(
     server_addr: SocketAddr,
     server_dns: DNSNameRef<'_>,
     server_client_config: Arc<ClientConfig>,
+) -> Result<(Reader, Writer, Vec<u8>), (&'static str, ConnError)> {
+    debug!("Connecting to ebbflow");
+    let (mut sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config)
+        .await
+        .map_err(|e| ("Error establishing connection with Ebbflow", e))?;
+
+    let mut initialbuf = [0; 256];
+    let n = sr.read(&mut initialbuf[0..]).await.map_err(|e| ("Error with established connection to Ebbflow", e.into()))?;
+
+    if n == 0 {
+        return Err(("Read 0 bytes meaning a disconnect from ebbflow", ConnError::Io(IoError::from(ErrorKind::ConnectionReset))));
+    }
+    Ok((sr, sw, initialbuf[0..n].to_vec()))
+}
+
+async fn start_proxying_connection(
+    sr: Reader,
+    sw: Writer,
+    initially_read: Vec<u8>,
     local_addr: SocketAddr,
 ) -> Result<(), (&'static str, ConnError)> {
     // Get a connection to local
@@ -192,15 +357,9 @@ async fn connection(
         .await
         .map_err(|e| ("Error establishing local connection", e))?;
 
-    // Get a connection to Ebbflow
-    debug!("Connecting to ebbflow");
-    let (sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config)
-        .await
-        .map_err(|e| ("Error establishing connection with Ebbflow", e))?;
-
     // Serve
     debug!("Proxying connection");
-    proxy(sr, sw, cr, cw).await.map_err(|e| ("sadf", e))
+    proxy(sr, sw, cr, cw, &initially_read[..]).await.map_err(|e| ("sadf", e))
 }
 
 async fn connect_ebbflow(
@@ -252,9 +411,37 @@ async fn proxy(
     mut sw: Writer,
     mut cr: Reader,
     mut cw: Writer,
+    initial: &[u8],
 ) -> Result<(), ConnError> {
-    let s2c = tokio::io::copy(&mut sr, &mut cw);
-    let c2s = tokio::io::copy(&mut cr, &mut sw);
+    cw.write_all(initial).await?;
+    let s2c = Box::pin(async move {
+        let _x : Result<(), std::io::Error> = loop {
+            let mut buf = [0; 2048];
+            let n = sr.read(&mut buf[0..]).await?;
+            if n == 0 {
+                trace!("S>C read {} bytes, terminating connection", n);
+                return Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+            }
+            cw.write(&buf[0..n]).await?;
+            cw.flush().await?;
+            trace!("S>C read {} bytes and flushed them", n);
+        };
+        _x
+    });
+    let c2s = Box::pin(async move {
+        let _x : Result<(), std::io::Error> = loop {
+            let mut buf = [0; 2048];
+            let n = cr.read(&mut buf[0..]).await?;
+            if n == 0 {
+                trace!("C>S read {} bytes, terminating connection", n);
+                return Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+            }
+            sw.write(&buf[0..n]).await?;
+            sw.flush().await?;
+            trace!("C>S read {} bytes and flushed them", n);
+        };
+        _x
+    });
     debug!("A proxied connection has been established between the two parties");
 
     match select(s2c, c2s).await {
