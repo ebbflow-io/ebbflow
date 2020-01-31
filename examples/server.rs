@@ -14,18 +14,14 @@ async fn main() {
     let addr = ([127, 0, 0, 1], 8080).into();
 
     // And a MakeService to  handle each connection...
-    let make_service = make_service_fn(|_| {
-        async {
-            Ok::<_, Error>(service_fn(|_req| {
-                async {
-                    info!("Received request, returning response");
-                    Ok::<_, Error>(Response::new(Body::from(format!(
-                        "Hello, World! Hostname: {:?}\n",
-                        hostname::get().unwrap()
-                    ))))
-                }
-            }))
-        }
+    let make_service = make_service_fn(|_| async {
+        Ok::<_, Error>(service_fn(|_req| async {
+            info!("Received request, returning response");
+            Ok::<_, Error>(Response::new(Body::from(format!(
+                "Hello, World! Hostname: {:?}\n",
+                hostname::get().unwrap()
+            ))))
+        }))
     });
 
     // Then bind and serve...

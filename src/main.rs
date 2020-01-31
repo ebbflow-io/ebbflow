@@ -1,16 +1,16 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-#[macro_use]
-extern crate clap;
+
 use clap::{value_t, App, Arg};
 use futures::future::select;
 use futures::future::Either;
 use log::LevelFilter;
 use std::env;
 use std::io::Error as IoError;
-use std::io::ErrorKind;
+use std::io::ErrorKind as IoErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::split;
@@ -22,37 +22,24 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
 type Clizzle = ClientTlsStream<TcpStream>; // Sick of typing it
-
 trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 
-const CONN_LOOP_SLEEP: u64 = 1000;
-const PORT: &'static str = "port";
-const ADDR: &'static str = "local-addr";
-const KEY: &'static str = "key";
-const CRT: &'static str = "cert";
-const DNS: &'static str = "dns";
-const NCONNS: &'static str = "max-conns";
+const CONN_LOOP_SLEEP: u64 = 4000;
+const PORT: &str = "port";
+const ADDR: &str = "local-addr";
+const KEY: &str = "key";
+const CRT: &str = "cert";
+const DNS: &str = "dns";
+const NCONNS: &str = "max-conns";
 const DEFAULT_NCONNS: usize = 1;
-const DEFAULT_ADDR: &'static str = "0.0.0.0";
-
-arg_enum! {
-    #[derive(Debug)]
-    enum Modes {
-        tcp,
-        ssh,
-    }
-}
-
+const DEFAULT_ADDR: &str = "0.0.0.0";
 
 #[derive(Debug)]
-struct MyError {
-
-}
+struct MyError {}
 impl std::error::Error for MyError {}
 impl std::fmt::Display for MyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,6 +82,13 @@ async fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("localebb")
+                .long("localebb")
+                .global(true)
+                .hidden(true)
+                .help("Sets the level of verbosity (add v's for more logging, e.g. -vvv)"),
+        )
+        .arg(
             Arg::with_name("v")
                 .short("v")
                 .global(true)
@@ -121,7 +115,7 @@ async fn main() {
                 .arg(
                     Arg::with_name(PORT)
                         .short("p")
-                        .long("local-port")
+                        .long("port")
                         .value_name("PORT")
                         .help("The local PORT to proxy requests to e.g. 8080")
                         .takes_value(true)
@@ -147,18 +141,27 @@ async fn main() {
 
     let (dns, localaddr) = match matches.subcommand() {
         ("tcp", Some(tcp_matches)) => {
-            let raw_dns : String = tcp_matches.value_of(DNS).map(|x| x.to_string()).unwrap_or_else(|| env::var("EBB_DNS").map_err(|_| fail("Must provide dns, or EBB_DNS env var")).unwrap());
-            let server_dns =
-                DNSNameRef::try_from_ascii_str(&raw_dns)
-                    .map_err(|_| fail("Unable to parse DNS name"))
-                    .unwrap()
-                    .to_owned();
-            let addr = tcp_matches.value_of(ADDR).map(|x| x.to_string()).unwrap_or_else(|| env::var("EBB_ADDR").unwrap_or(DEFAULT_ADDR.to_string()));
-            let port = value_t!(tcp_matches, PORT, usize).unwrap_or_else(|_| {
-                match env::var("EBB_PORT") {
+            let raw_dns: String = tcp_matches
+                .value_of(DNS)
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| {
+                    env::var("EBB_DNS")
+                        .map_err(|_| fail("Must provide dns, or EBB_DNS env var"))
+                        .unwrap()
+                });
+            let server_dns = DNSNameRef::try_from_ascii_str(&raw_dns)
+                .map_err(|_| fail("Unable to parse DNS name"))
+                .unwrap()
+                .to_owned();
+            let addr = tcp_matches
+                .value_of(ADDR)
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| env::var("EBB_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string()));
+            let port =
+                value_t!(tcp_matches, PORT, usize).unwrap_or_else(|_| match env::var("EBB_PORT") {
                     Ok(s) => {
                         if s == "" {
-                            fail("Must provide --local-port or EBB_PORT to ebbflow");
+                            fail("Must provide --port or EBB_PORT to ebbflow");
                         } else {
                             s.parse()
                                 .map_err(|_| fail("cannot parse EBB_CONNS value to a number"))
@@ -166,9 +169,8 @@ async fn main() {
                         }
                     }
                     Err(_e) => fail("Must provide --port or EBB_PORT to ebbflow"),
-                }
-            });
-        
+                });
+
             let local_addr = format!("{}:{}", addr, port)
                 .parse()
                 .map_err(|_| fail("Unable to parse local address"))
@@ -176,31 +178,38 @@ async fn main() {
             (server_dns, local_addr)
         }
         ("ssh", Some(ssh_matches)) => {
-            let raw_hostname : String = get_var_string(&ssh_matches, "hostname", "EBB_HOST", None, false).unwrap_or_else(|| {
-                hostname::get()
-                    .map_err(|_| fail("failed retrieving the hostname from the OS"))
-                    .unwrap()
-                    .into_string()
-                    .map_err(|_| fail("failed to parse OS hostname"))
-                    .unwrap()
-            });
-            let account_id : String = get_var_string(&ssh_matches, "accountid", "EBB_ACCOUNTID", None, true).unwrap();
+            let raw_hostname: String =
+                get_var_string(&ssh_matches, "hostname", "EBB_HOST", None, false).unwrap_or_else(
+                    || {
+                        hostname::get()
+                            .map_err(|_| fail("failed retrieving the hostname from the OS"))
+                            .unwrap()
+                            .into_string()
+                            .map_err(|_| fail("failed to parse OS hostname"))
+                            .unwrap()
+                    },
+                );
+            let account_id: String =
+                get_var_string(&ssh_matches, "accountid", "EBB_ACCOUNTID", None, true).unwrap();
 
             let hostname = format!("{}.{}.ebbflowssh", raw_hostname, account_id);
             let dns = DNSNameRef::try_from_ascii_str(&hostname)
                 .map_err(|_| fail("Unable to parse DNS name"))
                 .unwrap()
                 .to_owned();
-            (dns, SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 22))
+            (
+                dns,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 22),
+            )
         }
         _ => fail("Logic error in client, unreachable state (unrecognized subcommand)"),
     };
 
     // GET GLOBAL ARGS
-    let key : String = get_var_string(&matches, KEY, "EBB_KEY", None, true).unwrap();
-    let crt : String = get_var_string(&matches, CRT, "EBB_CRT", None, true).unwrap();
-    let max_conns = value_t!(matches, NCONNS, usize).unwrap_or_else(|_| {
-        match env::var("EBB_CONNS") {
+    let key: String = get_var_string(&matches, KEY, "EBB_KEY", None, true).unwrap();
+    let crt: String = get_var_string(&matches, CRT, "EBB_CRT", None, true).unwrap();
+    let max_conns =
+        value_t!(matches, NCONNS, usize).unwrap_or_else(|_| match env::var("EBB_CONNS") {
             Ok(s) => {
                 if s == "" {
                     DEFAULT_NCONNS
@@ -209,16 +218,14 @@ async fn main() {
                 }
             }
             Err(_e) => DEFAULT_NCONNS,
-        }
-    });
+        });
     let level = match matches.occurrences_of("v") {
         0 => LevelFilter::Warn,
         1 => LevelFilter::Info,
         2 => LevelFilter::Debug,
-        3 | _ => LevelFilter::Trace,
+        _ => LevelFilter::Trace,
     };
-    let use_local_ebbflow = matches.is_present("localebbflow");
-
+    let use_local_ebbflow = matches.is_present("localebb");
 
     env_logger::builder().filter_level(level).init();
     let mut ccfg = ClientConfig::new();
@@ -226,29 +233,41 @@ async fn main() {
     ccfg.set_single_client_cert(load_certs(&crt), load_private_key(&key));
     let server_client_config = Arc::new(ccfg);
 
-    loopy(dns, server_client_config, localaddr, server_addr(use_local_ebbflow), max_conns).await;
+    loopy(
+        dns,
+        server_client_config,
+        localaddr,
+        server_addr(use_local_ebbflow),
+        max_conns,
+    )
+    .await;
 }
 
-fn get_var_string(matches: &clap::ArgMatches, var_name: &str, env_var_name: &str, default: Option<String>, required: bool) -> Option<String> {
+fn get_var_string(
+    matches: &clap::ArgMatches,
+    var_name: &str,
+    env_var_name: &str,
+    default: Option<String>,
+    required: bool,
+) -> Option<String> {
     match matches.value_of(var_name) {
         Some(s) => Some(s.to_string()),
-        None => {
-            match std::env::var(env_var_name) {
-                Ok(s) => Some(s),
-                Err(_) => {
-                    match default {
-                        Some(s) => Some(s),
-                        None => {
-                            if required {
-                                fail(&format!("Must provide --{} or {} environment variable", var_name, env_var_name));
-                            } else {
-                                None
-                            }
-                        }
+        None => match std::env::var(env_var_name) {
+            Ok(s) => Some(s),
+            Err(_) => match default {
+                Some(s) => Some(s),
+                None => {
+                    if required {
+                        fail(&format!(
+                            "Must provide --{} or {} environment variable",
+                            var_name, env_var_name
+                        ));
+                    } else {
+                        None
                     }
                 }
-            }
-        }
+            },
+        },
     }
 }
 
@@ -270,7 +289,7 @@ impl From<IoError> for ConnError {
 
 fn server_addr(ebbflow_override: bool) -> SocketAddr {
     if ebbflow_override {
-        return SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 7070)
+        return SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 7070);
     }
     if rand::random() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(75, 2, 123, 22)), 7070)
@@ -290,14 +309,16 @@ async fn loopy(
 ) {
     let active_conns = Arc::new(AtomicUsize::new(0));
     loop {
-        let addr = local_addr.clone();
         loop {
             let active = active_conns.load(Ordering::SeqCst);
             if active >= max {
                 debug!("We have more active connections ({}) than our max ({}), we will not establish another connection with ebbflow until that is done", active, max);
                 tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
             } else {
-                debug!("We have less ({}) than our max ({}), we will continue", active, max);
+                debug!(
+                    "We have less ({}) than our max ({}), we will continue",
+                    active, max
+                );
                 break;
             }
         }
@@ -306,13 +327,15 @@ async fn loopy(
             ebbflow_addr,
             server_dns.as_ref(),
             server_client_config.clone(),
-        ).await {
+        )
+        .await
+        {
             Ok((r, w, i)) => {
                 let connscounter = active_conns.clone();
                 debug!("Got a connection from ebbflow");
                 tokio::spawn(async move {
                     connscounter.fetch_add(1, Ordering::SeqCst);
-                    if let Err(e) = start_proxying_connection(r, w, i, addr).await {
+                    if let Err(e) = start_proxying_connection(r, w, i, local_addr).await {
                         debug!("Existing connection terminated: {:?}", e);
                     }
                     connscounter.fetch_sub(1, Ordering::SeqCst);
@@ -321,6 +344,7 @@ async fn loopy(
             Err((msg, e)) => {
                 debug!("Error waiting on an ebbflow connection");
                 warn!("{}: {:?}", msg, e);
+                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
             }
         }
     }
@@ -337,10 +361,16 @@ async fn wait_for_conn(
         .map_err(|e| ("Error establishing connection with Ebbflow", e))?;
 
     let mut initialbuf = [0; 256];
-    let n = sr.read(&mut initialbuf[0..]).await.map_err(|e| ("Error with established connection to Ebbflow", e.into()))?;
+    let n = sr
+        .read(&mut initialbuf[0..])
+        .await
+        .map_err(|e| ("Error with established connection to Ebbflow", e.into()))?;
 
     if n == 0 {
-        return Err(("Read 0 bytes meaning a disconnect from ebbflow", ConnError::Io(IoError::from(ErrorKind::ConnectionReset))));
+        return Err((
+            "Read 0 bytes meaning a disconnect from ebbflow",
+            ConnError::Io(IoError::from(IoErrorKind::ConnectionReset)),
+        ));
     }
     Ok((sr, sw, initialbuf[0..n].to_vec()))
 }
@@ -359,7 +389,9 @@ async fn start_proxying_connection(
 
     // Serve
     debug!("Proxying connection");
-    proxy(sr, sw, cr, cw, &initially_read[..]).await.map_err(|e| ("sadf", e))
+    proxy(sr, sw, cr, cw, &initially_read[..])
+        .await
+        .map_err(|e| ("sadf", e))
 }
 
 async fn connect_ebbflow(
@@ -415,32 +447,30 @@ async fn proxy(
 ) -> Result<(), ConnError> {
     cw.write_all(initial).await?;
     let s2c = Box::pin(async move {
-        let _x : Result<(), std::io::Error> = loop {
+        loop {
             let mut buf = [0; 2048];
             let n = sr.read(&mut buf[0..]).await?;
             if n == 0 {
                 trace!("S>C read {} bytes, terminating connection", n);
-                return Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+                return Err::<(), IoError>(IoError::from(IoErrorKind::ConnectionAborted));
             }
             cw.write(&buf[0..n]).await?;
             cw.flush().await?;
             trace!("S>C read {} bytes and flushed them", n);
-        };
-        _x
+        }
     });
     let c2s = Box::pin(async move {
-        let _x : Result<(), std::io::Error> = loop {
+        loop {
             let mut buf = [0; 2048];
             let n = cr.read(&mut buf[0..]).await?;
             if n == 0 {
                 trace!("C>S read {} bytes, terminating connection", n);
-                return Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted))
+                return Err::<(), IoError>(IoError::from(IoErrorKind::ConnectionAborted));
             }
             sw.write(&buf[0..n]).await?;
             sw.flush().await?;
             trace!("C>S read {} bytes and flushed them", n);
-        };
-        _x
+        }
     });
     debug!("A proxied connection has been established between the two parties");
 

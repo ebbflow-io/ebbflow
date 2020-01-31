@@ -1,10 +1,19 @@
 [package]
 name = "ebb-client"
-version = "0.1.0"
+version = "0.2.1"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
-
+readme = "README.md"
+keywords = ["ssh", "proxy", "loadbalancer", "tcp", "ebbflow"]
+maintenance = { status = "actively-developed" }
+license-file = "LICENSE"
+homepage = "https://ebbflow.io"
+categories = ["network-programming", "command-line-utilities", "web-programming"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "ebbflow"
+path = "src/main.rs"
 
 [dependencies]
 futures = "0.3"
@@ -20,4 +29,3 @@ hostname = "0.3.0"
 [dev-dependencies]
 hyper = "0.13"
 hostname = "0.3"
-rustls-native-certs = "0.1.0"
