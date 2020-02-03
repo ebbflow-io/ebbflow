@@ -22,6 +22,7 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
+use tokio::time::timeout;
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
@@ -29,14 +30,15 @@ type Clizzle = ClientTlsStream<TcpStream>; // Sick of typing it
 trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 
 const CONN_LOOP_SLEEP: u64 = 4000;
+const DEFAULT_EBB_WAIT : Duration = Duration::from_secs(10 * 60);
 const PORT: &str = "port";
 const ADDR: &str = "local-addr";
 const KEY: &str = "key";
-const CRT: &str = "cert";
 const DNS: &str = "dns";
 const NCONNS: &str = "max-conns";
 const DEFAULT_NCONNS: usize = 1;
 const DEFAULT_ADDR: &str = "0.0.0.0";
+const MAX_IDLE: usize = 25;
 
 #[derive(Debug)]
 struct MyError {}
@@ -61,15 +63,6 @@ async fn main() {
                 .value_name("KEY")
                 .global(true)
                 .help("Path to file of client key for authenticating with Ebbflow")
-                .takes_value(true)
-        )
-        .arg(
-            Arg::with_name(CRT)
-                .short("c")
-                .long("cert")
-                .value_name("CERT")
-                .global(true)
-                .help("Path to file of client cert for authenticating with Ebbflow")
                 .takes_value(true)
         )
         .arg(
@@ -207,7 +200,6 @@ async fn main() {
 
     // GET GLOBAL ARGS
     let key: String = get_var_string(&matches, KEY, "EBB_KEY", None, true).unwrap();
-    let crt: String = get_var_string(&matches, CRT, "EBB_CRT", None, true).unwrap();
     let max_conns =
         value_t!(matches, NCONNS, usize).unwrap_or_else(|_| match env::var("EBB_CONNS") {
             Ok(s) => {
@@ -227,20 +219,33 @@ async fn main() {
     };
     let use_local_ebbflow = matches.is_present("localebb");
 
-    env_logger::builder().filter_level(level).init();
+    env_logger::builder()
+        .filter_level(level)
+        .filter(Some("rustls"), LevelFilter::Info)
+        .init();
+
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = ca();
-    ccfg.set_single_client_cert(load_certs(&crt), load_private_key(&key));
+    ccfg.set_single_client_cert(load_certs(&key), load_private_key(&key));
     let server_client_config = Arc::new(ccfg);
 
-    loopy(
-        dns,
-        server_client_config,
-        localaddr,
-        server_addr(use_local_ebbflow),
-        max_conns,
-    )
-    .await;
+    let numloopers = std::cmp::min(MAX_IDLE, max_conns);
+    for _ in 0..numloopers {
+        let d = dns.clone();
+        let s = server_client_config.clone();
+        tokio::spawn(async move {
+            loopy(
+                d,
+                s,
+                localaddr,
+                server_addr(use_local_ebbflow),
+                max_conns,
+            )
+            .await;
+        });
+    }
+    debug!("Spawned {} loopers", numloopers);
+    futures::future::pending().await
 }
 
 fn get_var_string(
@@ -313,7 +318,7 @@ async fn loopy(
             let active = active_conns.load(Ordering::SeqCst);
             if active >= max {
                 debug!("We have more active connections ({}) than our max ({}), we will not establish another connection with ebbflow until that is done", active, max);
-                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await; // TODO Jitter
             } else {
                 debug!(
                     "We have less ({}) than our max ({}), we will continue",
@@ -323,28 +328,33 @@ async fn loopy(
             }
         }
 
-        match wait_for_conn(
+        match timeout(DEFAULT_EBB_WAIT, wait_for_conn(  // TODO Jitter on timeout val
             ebbflow_addr,
             server_dns.as_ref(),
             server_client_config.clone(),
-        )
+        ))
         .await
         {
-            Ok((r, w, i)) => {
-                let connscounter = active_conns.clone();
-                debug!("Got a connection from ebbflow");
-                tokio::spawn(async move {
-                    connscounter.fetch_add(1, Ordering::SeqCst);
-                    if let Err(e) = start_proxying_connection(r, w, i, local_addr).await {
-                        debug!("Existing connection terminated: {:?}", e);
-                    }
-                    connscounter.fetch_sub(1, Ordering::SeqCst);
-                });
-            }
-            Err((msg, e)) => {
-                debug!("Error waiting on an ebbflow connection");
-                warn!("{}: {:?}", msg, e);
-                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+            Ok(result) => match result {
+                Ok((r, w, i)) => {
+                    let connscounter = active_conns.clone();
+                    debug!("Got a connection from ebbflow");
+                    tokio::spawn(async move {
+                        connscounter.fetch_add(1, Ordering::SeqCst);
+                        if let Err(e) = start_proxying_connection(r, w, i, local_addr).await {
+                            debug!("Existing connection terminated: {:?}", e);
+                        }
+                        connscounter.fetch_sub(1, Ordering::SeqCst);
+                    });
+                }
+                Err((msg, e)) => {
+                    debug!("Error waiting on an ebbflow connection");
+                    warn!("{}: {:?}", msg, e);
+                    tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;  // TODO Jitter
+                }
+            },
+            Err(_) => {
+                debug!("The ebb connection timedout out after {:?}, will loop", DEFAULT_EBB_WAIT);
             }
         }
     }
