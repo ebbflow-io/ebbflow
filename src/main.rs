@@ -6,7 +6,10 @@ use clap::{value_t, App, Arg};
 use futures::future::select;
 use futures::future::Either;
 use log::LevelFilter;
+use simplelog::*;
+use std::convert::TryFrom;
 use std::env;
+use std::fs::File;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -14,15 +17,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::split;
+use tokio::io::AsyncReadExt;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
+use tokio::time::timeout;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::webpki::DNSName;
 use tokio_rustls::webpki::DNSNameRef;
 use tokio_rustls::TlsConnector;
-use tokio::time::timeout;
 
 type Writer = Box<dyn AsyncWrite + Unpin + Send>;
 type Reader = Box<dyn AsyncRead + Unpin + Send>;
@@ -30,7 +34,7 @@ type Clizzle = ClientTlsStream<TcpStream>; // Sick of typing it
 trait ReaderWriterTrait: AsyncRead + AsyncWrite {}
 
 const CONN_LOOP_SLEEP: u64 = 4000;
-const DEFAULT_EBB_WAIT : Duration = Duration::from_secs(10 * 60);
+const DEFAULT_EBB_WAIT: Duration = Duration::from_secs(60 * 60);
 const PORT: &str = "port";
 const ADDR: &str = "local-addr";
 const KEY: &str = "key";
@@ -40,19 +44,10 @@ const DEFAULT_NCONNS: usize = 1;
 const DEFAULT_ADDR: &str = "0.0.0.0";
 const MAX_IDLE: usize = 25;
 
-#[derive(Debug)]
-struct MyError {}
-impl std::error::Error for MyError {}
-impl std::fmt::Display for MyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(asdfa)")
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let matches = App::new("Ebbflow Client")
-        .version("0.2")
+        .version("0.4")
         .setting(clap::AppSettings::SubcommandRequired)
         .setting(clap::AppSettings::VersionlessSubcommands)
         .about("\nProxies ebbflow connections to your service. Environment variables can be used instead of options, see documentation online.")
@@ -75,11 +70,19 @@ async fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("logfile")
+                .short("f")
+                .long("logfile")
+                .value_name("logfile")
+                .global(true)
+                .help("The file name to log to instead of STDOUT")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("localebb")
                 .long("localebb")
                 .global(true)
-                .hidden(true)
-                .help("Sets the level of verbosity (add v's for more logging, e.g. -vvv)"),
+                .hidden(true),
         )
         .arg(
             Arg::with_name("v")
@@ -129,10 +132,17 @@ async fn main() {
                         .takes_value(true)
                         .help("The hostname to be accessible by, defaults to server's hostname"),
                 )
+                .arg(
+                    Arg::with_name("sshport")
+                        .long("sshport")
+                        .global(true)
+                        .takes_value(true)
+                        .hidden(true),
+                )
         )
         .get_matches();
 
-    let (dns, localaddr) = match matches.subcommand() {
+    let (dns, localaddr, hostname) = match matches.subcommand() {
         ("tcp", Some(tcp_matches)) => {
             let raw_dns: String = tcp_matches
                 .value_of(DNS)
@@ -149,7 +159,9 @@ async fn main() {
             let addr = tcp_matches
                 .value_of(ADDR)
                 .map(|x| x.to_string())
-                .unwrap_or_else(|| env::var("EBB_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string()));
+                .unwrap_or_else(|| {
+                    env::var("EBB_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string())
+                });
             let port =
                 value_t!(tcp_matches, PORT, usize).unwrap_or_else(|_| match env::var("EBB_PORT") {
                     Ok(s) => {
@@ -168,7 +180,7 @@ async fn main() {
                 .parse()
                 .map_err(|_| fail("Unable to parse local address"))
                 .unwrap();
-            (server_dns, local_addr)
+            (server_dns, local_addr, None)
         }
         ("ssh", Some(ssh_matches)) => {
             let raw_hostname: String =
@@ -185,14 +197,16 @@ async fn main() {
             let account_id: String =
                 get_var_string(&ssh_matches, "accountid", "EBB_ACCOUNTID", None, true).unwrap();
 
-            let hostname = format!("{}.{}.ebbflowssh", raw_hostname, account_id);
-            let dns = DNSNameRef::try_from_ascii_str(&hostname)
+            let sshport = value_t!(ssh_matches, "sshport", u16).unwrap_or(22);
+            let endpoint = format!("{}.ebbflowssh", account_id);
+            let dns = DNSNameRef::try_from_ascii_str(&endpoint)
                 .map_err(|_| fail("Unable to parse DNS name"))
                 .unwrap()
                 .to_owned();
             (
                 dns,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 22),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), sshport),
+                Some(raw_hostname),
             )
         }
         _ => fail("Logic error in client, unreachable state (unrecognized subcommand)"),
@@ -219,22 +233,31 @@ async fn main() {
     };
     let use_local_ebbflow = matches.is_present("localebb");
 
-    env_logger::builder()
-        .filter_level(level)
-        .filter(Some("rustls"), LevelFilter::Info)
-        .init();
+    if let Some(filename) = get_var_string(&matches, "logfile", "EBB_LOGFILE", None, false) {
+        CombinedLogger::init(vec![WriteLogger::new(
+            level,
+            Config::default(),
+            File::create(&filename).unwrap(),
+        )])
+        .unwrap();
+    } else {
+        env_logger::builder().filter_level(level).init();
+    }
 
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = ca();
-    ccfg.set_single_client_cert(load_certs(&key), load_private_key(&key));
+    ccfg.set_single_client_cert(load_certs(&key), load_private_key(&key))
+        .unwrap();
     let server_client_config = Arc::new(ccfg);
 
     let numloopers = std::cmp::min(MAX_IDLE, max_conns);
     for _ in 0..numloopers {
         let d = dns.clone();
         let s = server_client_config.clone();
+        let h = hostname.clone();
         tokio::spawn(async move {
             loopy(
+                h,
                 d,
                 s,
                 localaddr,
@@ -284,6 +307,7 @@ fn fail(s: &str) -> ! {
 #[derive(Debug)]
 enum ConnError {
     Io(IoError),
+    Other(String),
 }
 
 impl From<IoError> for ConnError {
@@ -298,14 +322,13 @@ fn server_addr(ebbflow_override: bool) -> SocketAddr {
     }
     if rand::random() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(75, 2, 123, 22)), 7070)
-    //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
     } else {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(99, 83, 172, 111)), 7070)
-        //SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 7070)
     }
 }
 
 async fn loopy(
+    hostname: Option<String>,
     server_dns: DNSName,
     server_client_config: Arc<ClientConfig>,
     local_addr: SocketAddr,
@@ -318,7 +341,8 @@ async fn loopy(
             let active = active_conns.load(Ordering::SeqCst);
             if active >= max {
                 debug!("We have more active connections ({}) than our max ({}), we will not establish another connection with ebbflow until that is done", active, max);
-                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await; // TODO Jitter
+                tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+            // TODO Jitter
             } else {
                 debug!(
                     "We have less ({}) than our max ({}), we will continue",
@@ -328,17 +352,22 @@ async fn loopy(
             }
         }
 
-        match timeout(DEFAULT_EBB_WAIT, wait_for_conn(  // TODO Jitter on timeout val
-            ebbflow_addr,
-            server_dns.as_ref(),
-            server_client_config.clone(),
-        ))
+        match timeout(
+            DEFAULT_EBB_WAIT,
+            wait_for_conn(
+                // TODO Jitter on timeout val
+                ebbflow_addr,
+                server_dns.as_ref(),
+                server_client_config.clone(),
+                hostname.as_deref(),
+            ),
+        )
         .await
         {
             Ok(result) => match result {
                 Ok((r, w, i)) => {
                     let connscounter = active_conns.clone();
-                    debug!("Got a connection from ebbflow");
+                    debug!("Got connection data from ebbflow, will connect locally");
                     tokio::spawn(async move {
                         connscounter.fetch_add(1, Ordering::SeqCst);
                         if let Err(e) = start_proxying_connection(r, w, i, local_addr).await {
@@ -350,11 +379,15 @@ async fn loopy(
                 Err((msg, e)) => {
                     debug!("Error waiting on an ebbflow connection");
                     warn!("{}: {:?}", msg, e);
-                    tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;  // TODO Jitter
+                    tokio::time::delay_for(Duration::from_millis(CONN_LOOP_SLEEP)).await;
+                    // TODO Jitter
                 }
             },
             Err(_) => {
-                debug!("The ebb connection timedout out after {:?}, will loop", DEFAULT_EBB_WAIT);
+                debug!(
+                    "The ebb connection timedout out after {:?}, will loop",
+                    DEFAULT_EBB_WAIT
+                );
             }
         }
     }
@@ -364,9 +397,10 @@ async fn wait_for_conn(
     server_addr: SocketAddr,
     server_dns: DNSNameRef<'_>,
     server_client_config: Arc<ClientConfig>,
+    hostname: Option<&str>,
 ) -> Result<(Reader, Writer, Vec<u8>), (&'static str, ConnError)> {
     debug!("Connecting to ebbflow");
-    let (mut sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config)
+    let (mut sr, sw) = connect_ebbflow(server_addr, server_dns, server_client_config, hostname)
         .await
         .map_err(|e| ("Error establishing connection with Ebbflow", e))?;
 
@@ -404,19 +438,77 @@ async fn start_proxying_connection(
         .map_err(|e| ("sadf", e))
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum Protocol {
+    TCP_V0 = 0,
+    SSH_V0 = 9,
+}
+
+impl TryFrom<u32> for Protocol {
+    type Error = u32;
+    fn try_from(n: u32) -> Result<Self, u32> {
+        match n {
+            _ if n == Protocol::SSH_V0 as u32 => Ok(Protocol::SSH_V0),
+            _ if n == Protocol::TCP_V0 as u32 => Ok(Protocol::TCP_V0),
+            _ => Err(n),
+        }
+    }
+}
+
+// 'Negotiates' to use the given protocol, we don't really negotiate we just tell them we want to use X and expect they accept X
+async fn negotiate_protocol_only_ours(
+    tlsstream: &mut ClientTlsStream<TcpStream>,
+    protocol: Protocol,
+) -> Result<(), ConnError> {
+    let protobuf = (protocol as u32).to_be_bytes();
+    tlsstream.write_all(&protobuf[..]).await?;
+    let mut proto_to_use_buf = [0; 4];
+    tlsstream.read_exact(&mut proto_to_use_buf[..]).await?;
+    let proto_to_use_num = u32::from_be_bytes(proto_to_use_buf);
+    match Protocol::try_from(proto_to_use_num) {
+        Ok(n) if n == protocol => {
+            debug!("Protocol used {:?}", n);
+            Ok(())
+        },
+        Ok(_n) => Err(ConnError::Other(format!("They want to use protocol {} but as of now we don't support changing to that, from TCP_V0", proto_to_use_num))),
+        Err(_e) => Err(ConnError::Other(format!("Unable to parse a protocol version from {}", proto_to_use_num))),
+    }
+}
+
 async fn connect_ebbflow(
     addr: SocketAddr,
     dns: DNSNameRef<'_>,
     cfg: Arc<ClientConfig>,
+    hostname: Option<&str>,
 ) -> Result<(Reader, Writer), ConnError> {
     let stream = TcpStream::connect(addr).await?;
     stream.set_keepalive(Some(Duration::from_secs(1)))?;
     stream.set_nodelay(true)?;
 
     let connector = TlsConnector::from(cfg);
-    let tlsstream = connector.connect(dns, stream).await?;
+    let mut tlsstream = connector.connect(dns, stream).await?;
 
     debug!("A connection has been established to ebbflow");
+
+    // Protocol Negotiation
+    match hostname {
+        Some(h) => {
+            negotiate_protocol_only_ours(&mut tlsstream, Protocol::SSH_V0).await?;
+            let hostnamebuf = h.as_bytes();
+            let lenbuf: [u8; 2] = (hostnamebuf.len() as u16).to_be_bytes();
+            tlsstream.write_all(&lenbuf[..]).await?;
+            tlsstream.write_all(&hostnamebuf[..]).await?;
+            // SSH v0 involves stating the hostname and then that's it
+        }
+        None => {
+            // TCP_V0
+            negotiate_protocol_only_ours(&mut tlsstream, Protocol::TCP_V0).await?;
+            // That's it!
+        }
+    }
+    debug!("Protocol negotiaton complete");
 
     let (r, w) = split(tlsstream);
 
@@ -457,30 +549,12 @@ async fn proxy(
 ) -> Result<(), ConnError> {
     cw.write_all(initial).await?;
     let s2c = Box::pin(async move {
-        loop {
-            let mut buf = [0; 2048];
-            let n = sr.read(&mut buf[0..]).await?;
-            if n == 0 {
-                trace!("S>C read {} bytes, terminating connection", n);
-                return Err::<(), IoError>(IoError::from(IoErrorKind::ConnectionAborted));
-            }
-            cw.write(&buf[0..n]).await?;
-            cw.flush().await?;
-            trace!("S>C read {} bytes and flushed them", n);
-        }
+        tokio::io::copy(&mut sr, &mut cw).await?;
+        Ok::<(), std::io::Error>(())
     });
     let c2s = Box::pin(async move {
-        loop {
-            let mut buf = [0; 2048];
-            let n = cr.read(&mut buf[0..]).await?;
-            if n == 0 {
-                trace!("C>S read {} bytes, terminating connection", n);
-                return Err::<(), IoError>(IoError::from(IoErrorKind::ConnectionAborted));
-            }
-            sw.write(&buf[0..n]).await?;
-            sw.flush().await?;
-            trace!("C>S read {} bytes and flushed them", n);
-        }
+        tokio::io::copy(&mut cr, &mut sw).await?;
+        Ok::<(), std::io::Error>(())
     });
     debug!("A proxied connection has been established between the two parties");
 

@@ -1,6 +1,6 @@
 [package]
 name = "ebb-client"
-version = "0.2.1"
+version = "0.4.0"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"
@@ -17,14 +17,15 @@ path = "src/main.rs"
 
 [dependencies]
 futures = "0.3"
-tokio-rustls = "0.12.2"
+tokio-rustls = "0.13"
 log = "0.4.8"
 rand = { version = "0.7.3", features = ["small_rng"] }
 env_logger = "0.7.1"
 clap = "2.33.0"
 tokio = { version = "0.2", features = ["full"] }
-rustls = "0.16"
-hostname = "0.3.0"
+rustls = "0.17"
+hostname = "0.3"
+simplelog = "0.7.4"
 
 [dev-dependencies]
 hyper = "0.13"
