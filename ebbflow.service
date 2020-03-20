@@ -10,31 +10,10 @@ RestartSec=10
 Type=simple
 
 # Runtime Configuration
-## User to run as
-User=USER
-## or ebbflow ssh
-## Directory where the ebbflow executable lives..
-WorkingDirectory=/typically/home/directory/but/use/wherever
-ExecStart=/full/path/to/ebbflow ssh
-# You can do tcp instead: ExecStart=/full/path/to/ebbflow tcp
 
-# Base Configuration
-## Absolute or relative
-Environment=EBB_KEY=/path/to/key.pem
-## Optional (uncomment to use) The max num conns at once to this server
-# Environment=EBB_CONNS=100
-
-# TCP Specific
-## Your endpoint DNS
-Environment=EBB_DNS=yoursite.com
-## Port of your web service
-Environment=EBB_PORT=YourPort, e.g. 8080
-
-# SSH Specific
-## Found when logged in to ebbflow.io
-Environment=EBB_ACCOUNTID=YOURACCOUNTID
-## Optional (uncomment to use) defaults to the hostname provided by OS
-# Environment=EBB_HOST=whatever.hostname.you.want
+# Tell Ebbflow which file to load environment variables from like this
+# (You can alternatively set each env var in this .service file instead of point to another file)
+#Environment=EBB_ENVFILE=/path/to/env/file
 
 [Install]
 WantedBy=multi-user.target

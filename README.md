@@ -1,8 +1,8 @@
-# `ebbflow-client`
+# Ebbflow Client
 
 **NOTE** This is `Beta` quality as of now, and could use some more features and configurable settings!
 
-This is the end-host client for [`ebbflow`](https://ebbflow.io). This is used to proxy SSH or TCP connections between ebbflow and your local server. 
+This is the end-host client for [`ebbflow`](https://ebbflow.io). This is used to proxy SSH or TCP connections between ebbflow and your local server.
 
 ```
 ebbflow --help
@@ -32,9 +32,11 @@ ssh -J ACCTID@ebbflow.io USER@HOSTNAME
 ```
 
 ### Running the Client on Startup in the Background
-If you log out of the terminal or your host reboots, `ebbflow` will not start back up and you won't be able to host your endpoint, or ssh to the host. 
+If you log out of the terminal or your host reboots, `ebbflow` will not start back up and you won't be able to host your endpoint, or ssh to the host.
 
 To fix this, and have it run in the background always, you can adapt the provided `.service` file with [systemd](https://wiki.archlinux.org/index.php/Systemd), which is present on all major linux distributions, including Raspbian.
+
+NOTE That you could have multiple instances running at once, for example one for ssh and one for tcp!
 
 1. Adapt the `ebbflow.service` file to your needs, the file has more instructions
 1. Move the service file to the expected directory
@@ -65,9 +67,13 @@ To fix this, and have it run in the background always, you can adapt the provide
 
 ## Building & Testing
 
-TODO
+### Building Packages
+- Install `cargo-deb`: https://crates.io/crates/cargo-deb
+```
+cargo deb
+```
 
-## Contributing 
+## Contributing
 
 TODO
 

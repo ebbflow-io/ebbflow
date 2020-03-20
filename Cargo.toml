@@ -1,6 +1,6 @@
 [package]
-name = "ebb-client"
-version = "0.4.0"
+name = "ebbflow"
+version = "0.4.1"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"
@@ -8,6 +8,7 @@ keywords = ["ssh", "proxy", "loadbalancer", "tcp", "ebbflow"]
 maintenance = { status = "actively-developed" }
 license-file = "LICENSE"
 homepage = "https://ebbflow.io"
+description = "The on-host executable client for interacting with Ebbflow.io"
 categories = ["network-programming", "command-line-utilities", "web-programming"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 futures = "0.3"
 tokio-rustls = "0.13"
+dotenv = "0.15.0"
 log = "0.4.8"
 rand = { version = "0.7.3", features = ["small_rng"] }
 env_logger = "0.7.1"
@@ -30,3 +32,15 @@ simplelog = "0.7.4"
 [dev-dependencies]
 hyper = "0.13"
 hostname = "0.3"
+
+[package.metadata.deb]
+name = "ebbflow"
+extended-description = """\
+A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
+priority = "optional"
+
+[package.metadata.rpm.cargo]
+buildflags = ["--release"]
+
+[package.metadata.rpm.targets]
+ebbflow = { path = "/usr/bin/ebbflow" }

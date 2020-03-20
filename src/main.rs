@@ -40,22 +40,27 @@ const ADDR: &str = "local-addr";
 const KEY: &str = "key";
 const DNS: &str = "dns";
 const NCONNS: &str = "max-conns";
-const DEFAULT_NCONNS: usize = 1;
+const DEFAULT_NCONNS: usize = 5;
 const DEFAULT_ADDR: &str = "0.0.0.0";
 const MAX_IDLE: usize = 25;
+
+enum Command {
+    TCP,
+    SSH,
+}
 
 #[tokio::main]
 async fn main() {
     let matches = App::new("Ebbflow Client")
-        .version("0.4")
-        .setting(clap::AppSettings::SubcommandRequired)
+        .version("0.4.1")
         .setting(clap::AppSettings::VersionlessSubcommands)
-        .about("\nProxies ebbflow connections to your service. Environment variables can be used instead of options, see documentation online.")
+        .after_help("The Ebbflow client is intended to be simple to use in the interactive case,\nand powerful enough to support mutliple users and concurrent executions\nin other cases. See the online documentation for more guidance at\n\n- https://github.com/ebbflow-io/ebbflow\n- https://ebbflow.io.\n\nAny questions can be directed to support@ebbflow.io.\n\nThanks for using Ebbflow!")
+        .about("\nProxies Ebbflow connections to your server.")
         .arg(
             Arg::with_name(KEY)
                 .short("k")
                 .long("key")
-                .value_name("KEY")
+                .value_name("FILE")
                 .global(true)
                 .help("Path to file of client key for authenticating with Ebbflow")
                 .takes_value(true)
@@ -73,7 +78,7 @@ async fn main() {
             Arg::with_name("logfile")
                 .short("f")
                 .long("logfile")
-                .value_name("logfile")
+                .value_name("FILE")
                 .global(true)
                 .help("The file name to log to instead of STDOUT")
                 .takes_value(true),
@@ -83,6 +88,15 @@ async fn main() {
                 .long("localebb")
                 .global(true)
                 .hidden(true),
+        )
+        .arg(
+            Arg::with_name("envfile")
+                .short("e")
+                .long("envfile")
+                .value_name("FILE")
+                .global(true)
+                .help("Path to file which sets environment variables to be used")
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("v")
@@ -142,8 +156,33 @@ async fn main() {
         )
         .get_matches();
 
-    let (dns, localaddr, hostname) = match matches.subcommand() {
-        ("tcp", Some(tcp_matches)) => {
+    if let Some(envfile) = get_var_string(&matches, "envfile", "EBB_ENVFILE", None, false) {
+        if let Err(_e) = dotenv::from_filename(&envfile) {
+            fail(&format!("The enviroment variable file provided, {}, was unable to be read", envfile));
+        }
+    }
+
+    let command = if let None = matches.subcommand_name() {
+        // No subcommand, so we should have the following env var set
+        let mode = env::var("EBB_SINGLE_MODE")
+            .map_err(|_| fail("Must provide a subcommand, or EBB_SINGLE_MODE env var. Also try --help"))
+            .unwrap();
+        match mode.to_lowercase().as_ref() {
+            "ssh" => Command::SSH,
+            "tcp" => Command::TCP,
+            _ => fail(&format!("The provided EBB_SINGLE_MODE value is not supported: {}", mode)),
+        }
+    } else {
+        match matches.subcommand() {
+            ("tcp", Some(_tcp_matches)) => Command::TCP,
+            ("ssh", Some(_ssh_matches)) => Command::SSH,
+            _ => fail("Logic error in client, unreachable state (unrecognized subcommand)"),
+        }
+    };
+
+    let (dns, localaddr, hostname) = match command {
+        Command::TCP => {
+            let tcp_matches = matches.subcommand_matches("tcp").map(|x| x.clone()).unwrap_or_else(|| clap::ArgMatches::new());
             let raw_dns: String = tcp_matches
                 .value_of(DNS)
                 .map(|x| x.to_string())
@@ -182,7 +221,8 @@ async fn main() {
                 .unwrap();
             (server_dns, local_addr, None)
         }
-        ("ssh", Some(ssh_matches)) => {
+        Command::SSH => {
+            let ssh_matches = matches.subcommand_matches("ssh").map(|x| x.clone()).unwrap_or_else(|| clap::ArgMatches::new());
             let raw_hostname: String =
                 get_var_string(&ssh_matches, "hostname", "EBB_HOST", None, false).unwrap_or_else(
                     || {
@@ -209,7 +249,6 @@ async fn main() {
                 Some(raw_hostname),
             )
         }
-        _ => fail("Logic error in client, unreachable state (unrecognized subcommand)"),
     };
 
     // GET GLOBAL ARGS
