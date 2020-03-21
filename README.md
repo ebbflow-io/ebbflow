@@ -12,6 +12,38 @@ The client has two modes, `tcp` and `ssh`, and you select one of these modes whe
 
 **NOTE** By default, only `1` connection is proxied. This is intended to allow you to test without having tons of logs thrown at you.
 
+## Downloading, Updating, and Removing
+
+Mac
+```
+brew tap ebbflow-io/ebbflow
+brew install ebbflow
+
+# To update
+brew upgrade ebbflow
+
+# To remove
+brew remove ebbflow
+```
+
+Debian Linux
+```
+# Go to github releases, find the latest release, and copy the link to the .deb file
+wget http://github.com/.../ebbflow_VERSION_amd64.deb
+sudo apt install ./ebbflow_VERSION_amd64.deb
+
+# To Update
+# Go to github releases, find the latest release.. download
+wget http://github.com/.../ebbflow_VERSION_amd64.deb
+sudo apt install ./ebbflow_VERSION_amd64.deb
+
+
+# To remove
+sudo dpkg -P ebbflow
+```
+
+More instructions coming soon.
+
 ## Getting Started
 
 After following the [quickstart guide](https://preview.ebbflow.io/quickstart)
