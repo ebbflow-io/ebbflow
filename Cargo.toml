@@ -43,7 +43,7 @@ name = "ebbflow"
 extended-description = """\
 A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
 priority = "optional"
-section = "network"
+section = "net"
 depends = "$auto, systemd"
 maintainer-scripts="assets/debian"
 assets = [
