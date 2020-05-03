@@ -1,6 +1,6 @@
 [package]
 name = "ebbflow"
-version = "0.4.1"
+version = "0.5.0"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"
@@ -14,20 +14,25 @@ categories = ["network-programming", "command-line-utilities", "web-programming"
 
 [[bin]]
 name = "ebbflow"
-path = "src/main.rs"
+path = "src/ebbflow.rs"
+
+[[bin]]
+name = "ebbflowd"
+path = "src/ebbflowd.rs"
 
 [dependencies]
-futures = "0.3"
-tokio-rustls = "0.13"
+clap = "2.33.0"
 dotenv = "0.15.0"
+env_logger = "0.7.1"
+futures = "0.3"
+hostname = "0.3"
+hyper-rustls = "0.20.0"
 log = "0.4.8"
 rand = { version = "0.7.3", features = ["small_rng"] }
-env_logger = "0.7.1"
-clap = "2.33.0"
-tokio = { version = "0.2", features = ["full"] }
 rustls = "0.17"
-hostname = "0.3"
-simplelog = "0.7.4"
+simplelog = "0.7.6"
+tokio = { version = "0.2", features = ["full"] }
+tokio-rustls = "0.13"
 
 [dev-dependencies]
 hyper = "0.13"
@@ -38,6 +43,14 @@ name = "ebbflow"
 extended-description = """\
 A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
 priority = "optional"
+section = "network"
+depends = "$auto, systemd"
+maintainer-scripts="assets/debian"
+assets = [
+    ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],
+    ["target/release/ebbflowd", "/usr/sbin/", "755"],
+    ["target/release/ebbflow", "/usr/bin/", "755"]
+]
 
 [package.metadata.rpm.cargo]
 buildflags = ["--release"]

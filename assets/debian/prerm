@@ -1,0 +1,4 @@
+#!/bin/sh
+
+set -e 
+deb-systemd-invoke stop ebbflowd

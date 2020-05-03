@@ -105,6 +105,11 @@ NOTE That you could have multiple instances running at once, for example one for
 cargo deb
 ```
 
+- Install `cargo-rpm`: https://crates.io/crates/cargo-rpm
+```
+cargo rpm build
+```
+
 ## Contributing
 
 TODO
