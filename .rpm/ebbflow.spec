@@ -10,7 +10,7 @@ License: University of Illinois/NCSA Open Source License Copyright (c) All right
 Group: Applications/System
 Source0: %{name}-%{version}.tar.gz
 URL: https://ebbflow.io
-
+BuildRequires: systemd
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 
 %description
@@ -30,3 +30,13 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_bindir}/*
+%{_unitdir}
+
+%post
+%systemd_post ebbflowd.service
+
+%preun
+%systemd_preun ebbflowd.service
+
+%postun
+%systemd_postun_with_restart ebbflowd.service

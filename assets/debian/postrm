@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e 
+set -e
 
 # In case this system is running systemd, we make systemd reload the unit files
 # to pick up changes.
