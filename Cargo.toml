@@ -44,12 +44,12 @@ extended-description = """\
 A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
 priority = "optional"
 section = "net"
-depends = "$auto, systemd"
+depends = "$auto"
 maintainer-scripts="assets/debian"
 assets = [
     ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],
-    ["target/release/ebbflowd", "/usr/sbin/", "755"],
-    ["target/release/ebbflow", "/usr/bin/", "755"]
+    ["target/release/ebbflow", "/usr/bin/", "755"],
+    ["target/release/ebbflowd", "/usr/sbin/", "755"]
 ]
 
 [package.metadata.rpm.cargo]
@@ -57,3 +57,7 @@ buildflags = ["--release"]
 
 [package.metadata.rpm.targets]
 ebbflow = { path = "/usr/bin/ebbflow" }
+ebbflowd = { path = "/usr/sbin/ebbflowd" }
+
+[package.metadata.rpm.files]
+ebbflowd.service = { path = "/usr/lib/systemd/system/ebbflow" }
