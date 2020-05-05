@@ -1,0 +1,15 @@
+[Unit]
+Description=Ebbflow Client Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/sbin/ebbflowd
+Restart=always
+RestartSec=1
+Type=simple
+
+Environment=EBB_ENVFILE=/path/to/env/file
+
+[Install]
+WantedBy=multi-user.target

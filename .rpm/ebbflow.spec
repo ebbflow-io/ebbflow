@@ -3,15 +3,20 @@
 %define debug_package %{nil}
 
 Name: ebbflow
-Summary: Proxies Ebbflow connections to your server.
+Summary: The on-host executable client for interacting with Ebbflow.io
 Version: @@VERSION@@
 Release: @@RELEASE@@
 License: University of Illinois/NCSA Open Source License Copyright (c) All rights reserved.
-Group: Applications/System
+Group: System Environment/Daemons
 Source0: %{name}-%{version}.tar.gz
 URL: https://ebbflow.io
-#BuildRequires: systemd
+
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+BuildRequires: systemd
+
+Requires(post): systemd
+Requires(preun): systemd
+Requires(postun): systemd
 
 %description
 %{summary}
@@ -20,23 +25,13 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 %setup -q
 
 %install
-ls -lh
-ls -lh usr
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
 cp -a * %{buildroot}
-cp -a assets/ebbflowd.service %{_unitdir}
 
 %clean
 rm -rf %{buildroot}
 
-%files
-%defattr(-,root,root,-)
-%{_bindir}/*
-%{_sbindir}/*
-%{_unitdir}/*
-
-%post
 %systemd_post ebbflowd.service
 
 %preun
@@ -44,3 +39,9 @@ rm -rf %{buildroot}
 
 %postun
 %systemd_postun_with_restart ebbflowd.service
+
+%files
+%defattr(-,root,root,-)
+%{_bindir}/*
+%{_sbindir}/*
+%{_unitdir}/ebbflowd.service

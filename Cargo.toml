@@ -52,12 +52,23 @@ assets = [
     ["target/release/ebbflowd", "/usr/sbin/", "755"]
 ]
 
+#[package.metadata.rpm.cargo]
+#buildflags = ["--release"]
+
+#[package.metadata.rpm.targets]
+#ebbflow = { path = "/usr/bin/ebbflow" }
+#ebbflowd = { path = "/usr/sbin/ebbflowd" }
+
+#[package.metadata.rpm.files]
+#'ebbflowd.service' = { path = "/ebbflowd.service" }
+
 [package.metadata.rpm.cargo]
 buildflags = ["--release"]
+target = "x86_64-unknown-linux-musl"
 
 [package.metadata.rpm.targets]
 ebbflow = { path = "/usr/bin/ebbflow" }
 ebbflowd = { path = "/usr/sbin/ebbflowd" }
 
 [package.metadata.rpm.files]
-ebbflowd.service = { path = "/usr/lib/systemd/system/ebbflow" }
+"ebbflowd.service" = { path = "/usr/lib/systemd/system/ebbflowd.service" }
