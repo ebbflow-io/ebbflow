@@ -1,3 +1,4 @@
+
 //! This is a mock version of Ebbflow to be used for testing
 use tokio_rustls::TlsAcceptor;
 use tokio::net::TcpListener;
@@ -14,6 +15,8 @@ use std::sync::Arc;
 use tokio_rustls::server::TlsStream;
 use tokio::net::TcpStream;
 use parking_lot::Mutex;
+use ebbflow::messaging::*;
+use log::info;
 
 pub async fn listen_and_process(port_for_customers: usize, port_for_tested_client: usize) -> Result<(), io::Error> {
     let tested_clients = Arc::new(Mutex::new(Vec::new()));
@@ -27,11 +30,31 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
     tokio::spawn(async move {
         loop {
             let (socket, _) = listener.accept().await.unwrap();
-            let tlsstream = acceptor.accept(socket).await.unwrap();
+            let mut tlsstream = acceptor.accept(socket).await.unwrap();
 
             // receive message
+            let mut lenbuf: [u8; 4] = [0; 4];
+            tlsstream.read_exact(&mut lenbuf[..]).await.unwrap();
+            let len = u32::from_be_bytes(lenbuf);
+
+            let mut msgbuf = vec![0; len as usize];
+            tlsstream.read_exact(&mut msgbuf[..]).await.unwrap();
+
+            let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
+            if let Message::HelloV0(_) = msg {
+                info!("Got message from daemon {:?}", msg);
+            } else {
+                panic!("asdfas");
+            }
 
             // send message
+            let msg = Message::HelloResponseV0(HelloResponseV0 {
+                issue: None,
+            });
+            let msgvec = msg.to_wire_message().unwrap();
+            tlsstream.write_all(&msgvec[..]).await.unwrap();
+            tlsstream.flush().await.unwrap();
+            info!("Wrote message to {:?}", msg);
 
             tc.lock().push(tlsstream);
         }
@@ -43,11 +66,17 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
         let tc = tested_clients.clone();
         loop {
             let (socket, _) = listener.accept().await.unwrap();
+            info!("Got connection on customer server");
 
-            let clienttestedstream = tc.lock().pop().unwrap();
+            let mut clienttestedstream = tc.lock().pop().unwrap();
+            info!("Found local connection for customer connection");
 
-            // write message
-
+            // send message
+            let msg = Message::StartTrafficV0;
+            let msgvec = msg.to_wire_message().unwrap();
+            clienttestedstream.write_all(&msgvec[..]).await.unwrap();
+            clienttestedstream.flush().await.unwrap();
+            info!("Wrote message to {:?}", msg);
             tokio::spawn(copyezcopy(clienttestedstream, socket));
         }
     });
@@ -56,6 +85,7 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
 }
 
 pub async fn copyezcopy(stream1: TlsStream<TcpStream>, stream2: TcpStream) {
+    info!("Will proxy data");
     let (mut s1r, mut s1w) = tokio::io::split(stream1);
     let (mut s2r, mut s2w) = tokio::io::split(stream2);
 

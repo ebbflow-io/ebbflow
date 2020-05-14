@@ -1,4 +1,6 @@
 mod mockebb;
+#[macro_use]
+extern crate log;
 
 #[cfg(test)]
 mod basic_tests_v0 {
@@ -25,13 +27,16 @@ mod basic_tests_v0 {
 
         tokio::spawn(listen_and_process(customerport, testclientport));
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned ebb");
 
         tokio::spawn(start_basic_daemon(testclientport, serverport));
+        info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
-        println!("Spawned");
+        info!("Spawned server");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport)).await.unwrap();
-        println!("Connected");
+        info!("Connected");
 
         let mut server = serverconnhandle.await.unwrap().unwrap();
 
@@ -39,9 +44,11 @@ mod basic_tests_v0 {
 
         let writeme: [u8; 102] = [1; 102];
         customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff");
 
         let mut readme: [u8; 102] = [0; 102];
         server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff");
 
         assert_eq!(readme[..], writeme[..]);
     }
@@ -50,6 +57,7 @@ mod basic_tests_v0 {
         let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
 
         let (socket, _) = listener.accept().await?;
+        info!("Got a proxied connection to the server, giving back");
         Ok(socket)
     }
 

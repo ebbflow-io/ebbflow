@@ -107,7 +107,7 @@ async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &Endpo
     tlsstream.flush().await?;
 
     // Receive Response
-    let message = await_message(&mut tlsstream).await?;
+    let message = tos(await_message(&mut tlsstream), "error waiting for hello response").await??;
     match message {
         Message::HelloResponseV0(hr) => match hr.issue {
             Some(HelloResponseIssue::Forbidden) => {
@@ -180,7 +180,7 @@ async fn connect_ebbflow(args: &EndpointConnectionArgs) -> Result<TlsStream<TcpS
 
 async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, ConnectionError> {
     let mut lenbuf: [u8; 4] = [0; 4];
-    tos(tlsstream.read_exact(&mut lenbuf[..]), "awaiting message from ebbflow").await??;
+    tlsstream.read_exact(&mut lenbuf[..]).await?;
     let len = u32::from_be_bytes(lenbuf) as usize;
 
     if len > 50 * 1024 {
