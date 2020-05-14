@@ -15,6 +15,7 @@ const LONG_TIMEOUT: Duration = Duration::from_secs(3);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(500);
 const KILL_ACTIVE_DELAY: Duration = Duration::from_secs(60);
 const BAD_ERROR_DELAY: Duration = Duration::from_secs(30);
+const MIN_EBBFLOW_ERROR_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 enum ConnectionError {
@@ -24,6 +25,7 @@ enum ConnectionError {
     UnexpectedMessage,
     Forbidden,
     NotFound,
+    Shutdown,
 }
 
 impl From<MessageError> for ConnectionError {
@@ -55,27 +57,43 @@ pub enum EndpointConnectionType {
 }
 
 pub async fn run_connection(receiver: SignalReceiver, args: EndpointConnectionArgs, idle_permit: tokio::sync::OwnedSemaphorePermit) {
-    match run_connection_fallible(receiver, &args, idle_permit).await {
-        Ok(()) => {
+    let stream = match establish_ebbflow_connection(receiver.clone(), &args).await {
+        Ok(x) => {
             trace!("A connection finished gracefully");
-            // Done!
+            // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
+            // IDLE connections, not total.
+            drop(idle_permit);
+            x
         }
         Err(e) => {
             match e {
                 ConnectionError::Forbidden | ConnectionError::NotFound=> {
                     warn!("A connection for endpoint {} failed due to {:?}", args.endpoint, e);
+                    info!("Bad error delay");
+                    tokio::time::delay_for(BAD_ERROR_DELAY).await;
                     // We should sleep to avoid spamming, as NotFound and Forbidden errors
                     // are unlikely to be resolved anytime soon.
                 }
                 _ => {
-                    info!("A connection for endpoint {} failed due to {:?}", args.endpoint, e);
+                    info!("Failed to connect to Ebbflow for endpoint {} failed due to {:?}", args.endpoint, e);
                 }
             }
+            info!("Minimum Delay");
+            tokio::time::delay_for(MIN_EBBFLOW_ERROR_DELAY).await;
+            return
+        }
+    };
+    // TODO: Delay if we cannot connect locally
+
+    match proxy_data(stream, &args, receiver).await {
+        Ok(_) => {},
+        Err(e) => {
+            info!("error from proxy_data {:?}", e);
         }
     }
 }
 
-async fn run_connection_fallible(mut receiver: SignalReceiver, args: &EndpointConnectionArgs, idle_permit: tokio::sync::OwnedSemaphorePermit) -> Result<(), ConnectionError> {
+async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &EndpointConnectionArgs) -> Result<TlsStream<TcpStream>, ConnectionError> {
     // Connect to Ebbflow
     let mut tlsstream = connect_ebbflow(args).await?;
 
@@ -93,11 +111,9 @@ async fn run_connection_fallible(mut receiver: SignalReceiver, args: &EndpointCo
     match message {
         Message::HelloResponseV0(hr) => match hr.issue {
             Some(HelloResponseIssue::Forbidden) => {
-                tokio::time::delay_for(BAD_ERROR_DELAY).await;
                 return Err(ConnectionError::Forbidden)
             },
             Some(HelloResponseIssue::NotFound) => {
-                tokio::time::delay_for(BAD_ERROR_DELAY).await;
                 return Err(ConnectionError::NotFound)
             },
             None => {}, // Yay, we can continue!
@@ -106,36 +122,33 @@ async fn run_connection_fallible(mut receiver: SignalReceiver, args: &EndpointCo
     }
 
     // Await Connection
-    let mut initial_buf = [0; 1024];
-    let (n, receiver) = match futures::future::select(
+    let stream = match futures::future::select(
         receiverfut,
-       tlsstream.read(&mut initial_buf[..]),
+       Box::pin(async move {await_traffic_start(tlsstream).await}),
     ).await {
         Either::Left((_, readf)) => {
             drop(readf);
-            let (tcpstream, _) = tlsstream.into_inner();
-            tcpstream.shutdown(std::net::Shutdown::Both)?;
-            return Ok(());
+            return Err(ConnectionError::Shutdown);
         }
-        Either::Right((readresult, r)) => {
-            (readresult?, r)
+        Either::Right((readresult, _r)) => {
+            readresult?
         }
     };
 
-    // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
-    // IDLE connections, not total.
-    drop(idle_permit);
+    Ok(stream)
+}
 
+async fn proxy_data(mut tlsstream: TlsStream<TcpStream>, args: &EndpointConnectionArgs, mut receiver: SignalReceiver) -> Result<(), ConnectionError> {
     // We have some bytes and will proxy locally. First lets connect local
     let mut local = connect_local(args.local_addr.clone()).await?;
 
     // Now we have both, let's create the proxy future, which we can hard-abort
     let (proxyabortable, handle) = futures::future::abortable(Box::pin(async move {
-        proxy(&mut local, &mut tlsstream, &initial_buf[0..n]).await
+        proxy(&mut local, &mut tlsstream).await
     }));
 
     match futures::future::select(
-        receiver,
+        Box::pin(async move {receiver.wait().await }),
         proxyabortable,
     ).await {
         // If the same receiver from above fires, let's sleep, then kill the connection
@@ -186,6 +199,13 @@ async fn connect_local(localaddr: SocketAddrV4) -> Result<TcpStream, ConnectionE
     Ok(tcpstream)
 }
 
+async fn await_traffic_start(mut tlsstream: TlsStream<TcpStream>) -> Result<TlsStream<TcpStream>, ConnectionError> {
+    let message = await_message(&mut tlsstream).await?;
+    match message {
+        Message::StartTrafficV0 => Ok(tlsstream),
+        _ => return Err(ConnectionError::UnexpectedMessage),
+    }
+}
 
 fn create_hello(args: &EndpointConnectionArgs) -> Result<Vec<u8>, ConnectionError> {
     let t = match args.ctype {
@@ -197,12 +217,9 @@ fn create_hello(args: &EndpointConnectionArgs) -> Result<Vec<u8>, ConnectionErro
     Ok(message.to_wire_message()?)
 }
 
-async fn proxy(local: &mut TcpStream, ebbflow: &mut TlsStream<TcpStream>, initialbuf: &[u8]) -> Result<(), ConnectionError> {
+async fn proxy(local: &mut TcpStream, ebbflow: &mut TlsStream<TcpStream>) -> Result<(), ConnectionError> {
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
-
-    localwriter.write_all(&initialbuf[..]).await?;
-    localwriter.flush().await?;
 
     let local2ebb = Box::pin(async move {copy_bytes_ez(&mut localreader, &mut ebbflowwriter).await });
     let ebb2local = Box::pin(async move {copy_bytes_ez(&mut ebbflowreader, &mut localwriter).await });

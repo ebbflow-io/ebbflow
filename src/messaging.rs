@@ -16,6 +16,7 @@ pub enum Message {
     EnableDisableRequestV0(EnableDisableRequestV0),
     EnableDisableResponseV0,
     HelloResponseV0(HelloResponseV0),
+    StartTrafficV0,
 }
 
 impl From<serde_cbor::Error> for MessageError {
@@ -60,6 +61,7 @@ impl Message {
             4 => Ok(Message::EnableDisableRequestV0(serde_cbor::from_slice(&payload)?)),
             5 => Ok(Message::EnableDisableResponseV0),
             6 => Ok(Message::HelloResponseV0(serde_cbor::from_slice(&payload)?)),
+            7 => Ok(Message::StartTrafficV0),
             _ => Err(MessageError::UnknownMessage),
         }
     }
@@ -73,6 +75,7 @@ impl Message {
             EnableDisableRequestV0(x) => serde_cbor::to_vec(&x)?,
             EnableDisableResponseV0 => vec![],
             HelloResponseV0(x) => serde_cbor::to_vec(&x)?,
+            StartTrafficV0 => vec![],
         })
     }
 
@@ -85,6 +88,7 @@ impl Message {
             EnableDisableRequestV0(_) => 4,
             EnableDisableResponseV0 => 5,
             HelloResponseV0(_) => 6,
+            StartTrafficV0 => 7,
         }
     }
 }

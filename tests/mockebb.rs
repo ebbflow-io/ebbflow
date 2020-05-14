@@ -28,6 +28,11 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
         loop {
             let (socket, _) = listener.accept().await.unwrap();
             let tlsstream = acceptor.accept(socket).await.unwrap();
+
+            // receive message
+
+            // send message
+
             tc.lock().push(tlsstream);
         }
     });
@@ -40,6 +45,9 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
             let (socket, _) = listener.accept().await.unwrap();
 
             let clienttestedstream = tc.lock().pop().unwrap();
+
+            // write message
+
             tokio::spawn(copyezcopy(clienttestedstream, socket));
         }
     });
