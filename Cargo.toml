@@ -24,7 +24,7 @@ path = "src/ebbflowd.rs"
 clap = "2.33.0"
 dotenv = "0.15.0"
 env_logger = "0.7.1"
-futures = "0.3"
+futures = "0.3.5"
 hostname = "0.3"
 hyper-rustls = "0.20.0"
 log = "0.4.8"
@@ -33,6 +33,10 @@ rustls = "0.17"
 simplelog = "0.7.6"
 tokio = { version = "0.2", features = ["full"] }
 tokio-rustls = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11.1"
+rustls-native-certs = "0.3.0"
+webpki = "0.21"
 
 [dev-dependencies]
 hyper = "0.13"
