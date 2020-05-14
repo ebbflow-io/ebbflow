@@ -46,57 +46,6 @@ More instructions coming soon.
 
 ## Getting Started
 
-After following the [quickstart guide](https://preview.ebbflow.io/quickstart)
-
-A quick way to test out ebbflow is to run the example code and point the client at that or to use the SSH feature.
-
-For hosting and endpoint:
-```
-cargo run --example server &
-cargo run -- tcp -k KEYFILE -p 8080 --dns YOURWEBSITE.COM &
-curl YOURWEBSITE.COM
-```
-
-For SSHing:
-```
-cargo run -- ssh -k KEYFILE --accountid ACCTID &
-ssh -J ACCTID@ebbflow.io USER@HOSTNAME
-```
-
-### Running the Client on Startup in the Background
-If you log out of the terminal or your host reboots, `ebbflow` will not start back up and you won't be able to host your endpoint, or ssh to the host.
-
-To fix this, and have it run in the background always, you can adapt the provided `.service` file with [systemd](https://wiki.archlinux.org/index.php/Systemd), which is present on all major linux distributions, including Raspbian.
-
-NOTE That you could have multiple instances running at once, for example one for ssh and one for tcp!
-
-1. Adapt the `ebbflow.service` file to your needs, the file has more instructions
-1. Move the service file to the expected directory
-    ```
-    sudo cp ebbflow.service /etc/systemd/system/
-    ```
-1. Start up ebbflow
-    ```
-    sudo systemctl start ebbflow
-    ```
-1. Check that its up and running..
-    ```
-    sudo systemctl status ebbflow
-    ```
-1. Check that the hosting is actually running by hitting your endpoint/SSHing to your host
-1. Once you've verified everything is good to go, enable this service to be started at bootup
-    ```
-    sudo systemctl enable ebbflow
-    ```
-1. Thats it! You can also stop the service using
-    ```
-    sudo systemctl stop ebbflow
-    ```
-    Or you can see the logs by doing
-    ```
-    sudo journalctl ebbflow
-    ```
-
 ## Building & Testing
 
 ### Building Packages

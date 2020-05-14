@@ -1,44 +1,29 @@
 use std::net::SocketAddrV4;
-use futures::channel::oneshot::{channel, Sender, Receiver};
-use futures::future::{self, Either, Future, FutureExt};
+use futures::future::{Either, Future};
 use tokio::net::TcpStream;
 use std::io::Error as IoError;
 use tokio::time::timeout as tokiotimeout;
 use std::time::Duration;
-use rustls::{RootCertStore, ClientConfig};
 use tokio_rustls::TlsConnector;
-use std::sync::Arc;
 use tokio_rustls::client::TlsStream;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::prelude::*;
-use crate::messaging::{Message, HelloV0, MessageError};
+use crate::signal::SignalReceiver;
+use crate::messaging::{Message, HelloV0, MessageError, HelloResponseIssue};
 
-const EBBFLOW_DNS: &str = "s.ebbflow.io";
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
+const SHORT_TIMEOUT: Duration = Duration::from_millis(500);
 const KILL_ACTIVE_DELAY: Duration = Duration::from_secs(60);
-
-async fn ebbflow_addr() -> SocketAddrV4 {
-    todo!()
-}
-
-fn ebbflow_dns() -> webpki::DNSName {
-    webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS).unwrap().to_owned()
-}
-
-fn load_roots() -> Result<RootCertStore, ConnectionError> {
-    match rustls_native_certs::load_native_certs() {
-       rustls_native_certs::PartialResult::Ok(rcs) => Ok(rcs),
-       rustls_native_certs::PartialResult::Err((Some(rcs), _)) => Ok(rcs),
-       _ => Err(ConnectionError::RootStoreLoad)
-    }
-}
+const BAD_ERROR_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 enum ConnectionError {
     Io(IoError),
     Timeout(&'static str),
     Messaging(MessageError),
-    RootStoreLoad,
+    UnexpectedMessage,
+    Forbidden,
+    NotFound,
 }
 
 impl From<MessageError> for ConnectionError {
@@ -54,66 +39,76 @@ impl From<IoError> for ConnectionError {
 }
 
 pub struct EndpointConnectionArgs {
-    endpoint: String,
-    key: String,
-    local_addr: SocketAddrV4,
-    ctype: EndpointConnectionType,
-    ebbflow_addr: SocketAddrV4,
-    ebbflow_dns: webpki::DNSName,
+    pub endpoint: String,
+    pub key: String,
+    pub local_addr: SocketAddrV4,
+    pub ctype: EndpointConnectionType,
+    pub connector: TlsConnector,
+    pub ebbflow_addr: SocketAddrV4,
+    pub ebbflow_dns: webpki::DNSName,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EndpointConnectionType {
     Ssh,
     Tls,
 }
 
-pub struct EndpointConnection {
-    signalsender: Option<Sender<()>>,
-}
-
-impl EndpointConnection {
-    pub fn new(args: EndpointConnectionArgs) -> Self {
-        let (s, r) = channel();
-
-        tokio::spawn(run_connection(r, args));
-
-        Self {
-            signalsender: Some(s),
-        }
-    }
-
-    pub fn stop(&mut self) {
-        if let Some(sender) = self.signalsender.take() {
-            let _ = sender.send(());
-        }
-    }
-}
-
-async fn run_connection(receiver: Receiver<()>, args: EndpointConnectionArgs) {
-    match run_connection_fallible(receiver, &args).await {
+pub async fn run_connection(receiver: SignalReceiver, args: EndpointConnectionArgs, idle_permit: tokio::sync::OwnedSemaphorePermit) {
+    match run_connection_fallible(receiver, &args, idle_permit).await {
         Ok(()) => {
-
+            trace!("A connection finished gracefully");
+            // Done!
         }
-        Err(_e) => {
-
+        Err(e) => {
+            match e {
+                ConnectionError::Forbidden | ConnectionError::NotFound=> {
+                    warn!("A connection for endpoint {} failed due to {:?}", args.endpoint, e);
+                    // We should sleep to avoid spamming, as NotFound and Forbidden errors
+                    // are unlikely to be resolved anytime soon.
+                }
+                _ => {
+                    info!("A connection for endpoint {} failed due to {:?}", args.endpoint, e);
+                }
+            }
         }
     }
 }
 
-async fn run_connection_fallible(receiver: Receiver<()>, args: &EndpointConnectionArgs) -> Result<(), ConnectionError> {
+async fn run_connection_fallible(mut receiver: SignalReceiver, args: &EndpointConnectionArgs, idle_permit: tokio::sync::OwnedSemaphorePermit) -> Result<(), ConnectionError> {
     // Connect to Ebbflow
     let mut tlsstream = connect_ebbflow(args).await?;
-    
+
+    let receiverfut = Box::pin(async move {
+        receiver.wait().await;
+    });
+
     // Say Hello
     let hello = create_hello(args)?;
     tlsstream.write_all(&hello[..]).await?;
     tlsstream.flush().await?;
 
-    let mut initial_buf = [0; 1024];
+    // Receive Response
+    let message = await_message(&mut tlsstream).await?;
+    match message {
+        Message::HelloResponseV0(hr) => match hr.issue {
+            Some(HelloResponseIssue::Forbidden) => {
+                tokio::time::delay_for(BAD_ERROR_DELAY).await;
+                return Err(ConnectionError::Forbidden)
+            },
+            Some(HelloResponseIssue::NotFound) => {
+                tokio::time::delay_for(BAD_ERROR_DELAY).await;
+                return Err(ConnectionError::NotFound)
+            },
+            None => {}, // Yay, we can continue!
+        },
+        _ => return Err(ConnectionError::UnexpectedMessage),
+    }
 
     // Await Connection
+    let mut initial_buf = [0; 1024];
     let (n, receiver) = match futures::future::select(
-        receiver,
+        receiverfut,
        tlsstream.read(&mut initial_buf[..]),
     ).await {
         Either::Left((_, readf)) => {
@@ -127,9 +122,14 @@ async fn run_connection_fallible(receiver: Receiver<()>, args: &EndpointConnecti
         }
     };
 
+    // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
+    // IDLE connections, not total.
+    drop(idle_permit);
+
     // We have some bytes and will proxy locally. First lets connect local
     let mut local = connect_local(args.local_addr.clone()).await?;
 
+    // Now we have both, let's create the proxy future, which we can hard-abort
     let (proxyabortable, handle) = futures::future::abortable(Box::pin(async move {
         proxy(&mut local, &mut tlsstream, &initial_buf[0..n]).await
     }));
@@ -138,18 +138,20 @@ async fn run_connection_fallible(receiver: Receiver<()>, args: &EndpointConnecti
         receiver,
         proxyabortable,
     ).await {
+        // If the same receiver from above fires, let's sleep, then kill the connection
         Either::Left((_, readf)) => {
             tokio::spawn(readf); // This lets the future continue running until we kill it
             tokio::time::delay_for(KILL_ACTIVE_DELAY).await;
             handle.abort();
             return Ok(());
         }
+        // The connection ran its course, but remember it was an abortable future so we need to look at that result first
         Either::Right((proxyresult, _r)) => {
             match proxyresult {
                 Ok(innerresult) => innerresult,
                 Err(_) => {
-                    // This seems unreachable? But let's handle it anyways..
-                    Err(ConnectionError::Timeout("connection terminated"))
+                    // This seems unreachable? The abort future should Err only if we called .abort which only happens if the Either::Left wins... But let's handle it anyways..
+                    Err(ConnectionError::Timeout("unreachable segment, terminated"))
                 }
             }
         }
@@ -157,17 +159,28 @@ async fn run_connection_fallible(receiver: Receiver<()>, args: &EndpointConnecti
 }
 
 async fn connect_ebbflow(args: &EndpointConnectionArgs) -> Result<TlsStream<TcpStream>, ConnectionError> {
-    let mut clientconfig = ClientConfig::new();
-    clientconfig.root_store = load_roots()?;
-    let connector = TlsConnector::from(Arc::new(clientconfig));
-    let tcpstream = timeout(LONG_TIMEOUT, TcpStream::connect(args.ebbflow_addr.clone()), "connecting to ebbflow").await??;
+    let tcpstream = tol(TcpStream::connect(args.ebbflow_addr.clone()), "connecting to ebbflow").await??;
     tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
     tcpstream.set_nodelay(true)?;
-    Ok(connector.connect(args.ebbflow_dns.as_ref(), tcpstream).await?)
+    Ok(args.connector.connect(args.ebbflow_dns.as_ref(), tcpstream).await?)
+}
+
+async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, ConnectionError> {
+    let mut lenbuf: [u8; 4] = [0; 4];
+    tos(tlsstream.read_exact(&mut lenbuf[..]), "awaiting message from ebbflow").await??;
+    let len = u32::from_be_bytes(lenbuf) as usize;
+
+    if len > 50 * 1024 {
+        return Err(ConnectionError::Messaging(MessageError::Internal("message too big")));
+    }
+
+    let mut msgbuf = vec![0; len];
+    tlsstream.read_exact(&mut msgbuf[..]).await?;
+    Ok(Message::from_wire_without_the_length_prefix(&msgbuf[..])?)
 }
 
 async fn connect_local(localaddr: SocketAddrV4) -> Result<TcpStream, ConnectionError> {
-    let tcpstream = timeout(LONG_TIMEOUT, TcpStream::connect(localaddr), "connecting to local host").await??;
+    let tcpstream = tol(TcpStream::connect(localaddr), "connecting to local host").await??;
     tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
     tcpstream.set_nodelay(true)?;
     Ok(tcpstream)
@@ -198,10 +211,10 @@ async fn proxy(local: &mut TcpStream, ebbflow: &mut TlsStream<TcpStream>, initia
         Either::Left((_server_read_res, _c2s_future)) => (),
         Either::Right((_client_read_res, _s2c_future)) => (),
     }
-
-    todo!();
+    Ok(())
 }
 
+// ezpzlemonsqueezy
 async fn copy_bytes_ez<R, W>(
     r: &mut R,
     w: &mut W,
@@ -223,11 +236,21 @@ where
     }
 }
 
-async fn timeout<T>(duration: Duration, future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
+async fn tol<T>(future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
 where
     T: Future,
 {
-    match tokiotimeout(duration, future).await {
+    match tokiotimeout(LONG_TIMEOUT, future).await {
+        Ok(r) => Ok(r),
+        Err(_) => Err(ConnectionError::Timeout(msg)),
+    }
+}
+
+async fn tos<T>(future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
+where
+    T: Future,
+{
+    match tokiotimeout(SHORT_TIMEOUT, future).await {
         Ok(r) => Ok(r),
         Err(_) => Err(ConnectionError::Timeout(msg)),
     }

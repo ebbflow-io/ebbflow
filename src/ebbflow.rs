@@ -8,3 +8,6 @@ use clap::{value_t, App, Arg};
 async fn main() {
     println!("Hey, not sleeping done now bye");
 }
+
+// init
+// endpoint dns, endpoint port

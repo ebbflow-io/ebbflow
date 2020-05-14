@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub enum MessageError {
     Parse,
     UnknownMessage,
+    Internal(&'static str),
 }
 
 #[derive(Debug, PartialEq)]
@@ -14,6 +15,7 @@ pub enum Message {
     StatusResponseV0(StatusResponseV0),
     EnableDisableRequestV0(EnableDisableRequestV0),
     EnableDisableResponseV0,
+    HelloResponseV0(HelloResponseV0),
 }
 
 impl From<serde_cbor::Error> for MessageError {
@@ -57,6 +59,7 @@ impl Message {
             3 => Ok(Message::StatusResponseV0(serde_cbor::from_slice(&payload)?)),
             4 => Ok(Message::EnableDisableRequestV0(serde_cbor::from_slice(&payload)?)),
             5 => Ok(Message::EnableDisableResponseV0),
+            6 => Ok(Message::HelloResponseV0(serde_cbor::from_slice(&payload)?)),
             _ => Err(MessageError::UnknownMessage),
         }
     }
@@ -69,6 +72,7 @@ impl Message {
             StatusResponseV0(x) => serde_cbor::to_vec(&x)?,
             EnableDisableRequestV0(x) => serde_cbor::to_vec(&x)?,
             EnableDisableResponseV0 => vec![],
+            HelloResponseV0(x) => serde_cbor::to_vec(&x)?,
         })
     }
 
@@ -80,6 +84,7 @@ impl Message {
             StatusResponseV0(_) => 3,
             EnableDisableRequestV0(_) => 4,
             EnableDisableResponseV0 => 5,
+            HelloResponseV0(_) => 6,
         }
     }
 }
@@ -132,17 +137,28 @@ pub struct EnableDisableRequestV0 {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct StatusResponseV0 {
-    statuses: Vec<StatusV0>,
+    pub statuses: Vec<StatusV0>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct StatusV0 {
     /// ssh or tls
-    endpoint_type: EndpointType,
+    pub endpoint_type: EndpointType,
     /// e.g. myhost or test.mysite.com
-    endpoint_value: String,
+    pub endpoint_value: String,
     /// is this bad boi enabled?
-    enabled: bool,
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum HelloResponseIssue {
+    NotFound,
+    Forbidden,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct HelloResponseV0 {
+    pub issue: Option<HelloResponseIssue>,
 }
 
 #[cfg(test)]
