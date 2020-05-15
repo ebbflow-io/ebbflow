@@ -1,9 +1,9 @@
-use ebbflow::daemon::SharedInfo;
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
-use std::sync::Arc;
-use rustls::RootCertStore;
-use futures::future::BoxFuture;
+use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
+use futures::future::BoxFuture;
+use rustls::RootCertStore;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -19,15 +19,13 @@ async fn main() {
 }
 
 pub fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {
-    Box::pin(async {
-        EbbflowDaemonConfig::load_from_file().await
-    })
+    Box::pin(async { EbbflowDaemonConfig::load_from_file().await })
 }
 
 pub fn load_roots() -> Option<RootCertStore> {
     match rustls_native_certs::load_native_certs() {
-       rustls_native_certs::PartialResult::Ok(rcs) => Some(rcs),
-       rustls_native_certs::PartialResult::Err((Some(rcs), _)) => Some(rcs),
-       _ => None
+        rustls_native_certs::PartialResult::Ok(rcs) => Some(rcs),
+        rustls_native_certs::PartialResult::Err((Some(rcs), _)) => Some(rcs),
+        _ => None,
     }
 }

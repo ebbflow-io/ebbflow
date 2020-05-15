@@ -1,27 +1,33 @@
-
 //! This is a mock version of Ebbflow to be used for testing
-use tokio_rustls::TlsAcceptor;
-use tokio::net::TcpListener;
-use std::io;
-use rustls::ServerConfig;
-use tokio::prelude::*;
-use rustls::RootCertStore;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
-use rustls::{Certificate, PrivateKey};
-use std::fs;
-use std::io::BufReader;
-use std::sync::Arc;
-use tokio_rustls::server::TlsStream;
-use tokio::net::TcpStream;
-use parking_lot::Mutex;
 use ebbflow::messaging::*;
 use log::info;
+use parking_lot::Mutex;
+use rustls::RootCertStore;
+use rustls::ServerConfig;
+use rustls::{Certificate, PrivateKey};
+use std::fs;
+use std::io;
+use std::io::BufReader;
+use std::sync::Arc;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
+use tokio::prelude::*;
+use tokio_rustls::server::TlsStream;
+use tokio_rustls::TlsAcceptor;
 
-pub async fn listen_and_process(port_for_customers: usize, port_for_tested_client: usize) -> Result<(), io::Error> {
+pub async fn listen_and_process(
+    port_for_customers: usize,
+    port_for_tested_client: usize,
+) -> Result<(), io::Error> {
     let tested_clients = Arc::new(Mutex::new(Vec::new()));
     let mut scfg = ServerConfig::new(rustls::NoClientAuth::new());
-    scfg.set_single_cert(load_certs("tests/certs/test.crt"), load_private_key("tests/certs/test.key")).unwrap();
+    scfg.set_single_cert(
+        load_certs("tests/certs/test.crt"),
+        load_private_key("tests/certs/test.key"),
+    )
+    .unwrap();
     let scfg = Arc::new(scfg);
     let acceptor = TlsAcceptor::from(scfg.clone());
     let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port_for_tested_client)).await?;
@@ -48,9 +54,7 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
             }
 
             // send message
-            let msg = Message::HelloResponseV0(HelloResponseV0 {
-                issue: None,
-            });
+            let msg = Message::HelloResponseV0(HelloResponseV0 { issue: None });
             let msgvec = msg.to_wire_message().unwrap();
             tlsstream.write_all(&msgvec[..]).await.unwrap();
             tlsstream.flush().await.unwrap();
@@ -61,7 +65,9 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
     });
 
     tokio::spawn(async move {
-        let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port_for_customers)).await.unwrap();
+        let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port_for_customers))
+            .await
+            .unwrap();
 
         let tc = tested_clients.clone();
         loop {
@@ -80,11 +86,17 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
 
             // receive message
             let mut lenbuf: [u8; 4] = [0; 4];
-            clienttestedstream.read_exact(&mut lenbuf[..]).await.unwrap();
+            clienttestedstream
+                .read_exact(&mut lenbuf[..])
+                .await
+                .unwrap();
             let len = u32::from_be_bytes(lenbuf);
 
             let mut msgbuf = vec![0; len as usize];
-            clienttestedstream.read_exact(&mut msgbuf[..]).await.unwrap();
+            clienttestedstream
+                .read_exact(&mut msgbuf[..])
+                .await
+                .unwrap();
 
             let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
             if let Message::StartTrafficResponseV0(_inner) = msg {
@@ -113,14 +125,11 @@ pub async fn copyezcopy(stream1: TlsStream<TcpStream>, stream2: TcpStream) {
     });
 }
 
-async fn copy_bytes_ez<R, W>(
-    r: &mut R,
-    w: &mut W,
-) -> Result<(), std::io::Error>
-where 
+async fn copy_bytes_ez<R, W>(r: &mut R, w: &mut W) -> Result<(), std::io::Error>
+where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
- {
+{
     let mut buf = [0; 10 * 1024];
 
     loop {

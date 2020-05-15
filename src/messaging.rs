@@ -34,11 +34,11 @@ impl Message {
         let mut message_id = self.message_id().to_be_bytes().to_vec();
         let mut payload = self.payload()?;
         let len: u32 = message_id.len() as u32 + payload.len() as u32;
-        
+
         let mut message = len.to_be_bytes().to_vec();
         message.append(&mut message_id);
         message.append(&mut payload);
-        
+
         Ok(message)
     }
 
@@ -48,7 +48,7 @@ impl Message {
             return Err(MessageError::Parse);
         }
 
-        let mut messagebuf: [u8; 4] = [0;4];
+        let mut messagebuf: [u8; 4] = [0; 4];
         messagebuf.copy_from_slice(&buf[0..4]);
 
         let messageid: u32 = u32::from_be_bytes(messagebuf);
@@ -59,11 +59,15 @@ impl Message {
             1 => Ok(Message::HelloV0(serde_cbor::from_slice(&payload)?)),
             2 => Ok(Message::StatusRequestV0),
             3 => Ok(Message::StatusResponseV0(serde_cbor::from_slice(&payload)?)),
-            4 => Ok(Message::EnableDisableRequestV0(serde_cbor::from_slice(&payload)?)),
+            4 => Ok(Message::EnableDisableRequestV0(serde_cbor::from_slice(
+                &payload,
+            )?)),
             5 => Ok(Message::EnableDisableResponseV0),
             6 => Ok(Message::HelloResponseV0(serde_cbor::from_slice(&payload)?)),
             7 => Ok(Message::StartTrafficV0),
-            8 => Ok(Message::StartTrafficResponseV0(serde_cbor::from_slice(&payload)?)),
+            8 => Ok(Message::StartTrafficResponseV0(serde_cbor::from_slice(
+                &payload,
+            )?)),
             _ => Err(MessageError::UnknownMessage),
         }
     }
@@ -106,7 +110,7 @@ pub enum EndpointType {
 /// This message is a ServerHello v0.
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct HelloV0 {
-    /// The key 
+    /// The key
     pub key: String,
     /// The type of the endpoint for this connection
     pub endpoint_type: EndpointType,
@@ -203,7 +207,8 @@ mod tests {
         // Verify the length we parsed from the wire_message is equal to the wire_message's buf len minus 4.
         assert_eq!(wire_message.len() - 4, len as usize);
 
-        let parsed_from_wire = Message::from_wire_without_the_length_prefix(&wire_message[4..]).unwrap();
+        let parsed_from_wire =
+            Message::from_wire_without_the_length_prefix(&wire_message[4..]).unwrap();
 
         // The two messages should be equal!
         assert_eq!(message, parsed_from_wire);

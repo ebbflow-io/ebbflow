@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -40,15 +40,13 @@ impl EbbflowDaemonConfig {
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
         Ok(EbbflowDaemonConfig {
             key: "asdf".to_string(),
-            endpoints: vec![
-                Endpoint {
-                    port: 8000,
-                    dns: "ebbflow.io".to_string(),
-                    maxconns: 1000,
-                    idleconns_override: None,
-                    address_override: None,
-                }
-            ],
+            endpoints: vec![Endpoint {
+                port: 8000,
+                dns: "ebbflow.io".to_string(),
+                maxconns: 1000,
+                idleconns_override: None,
+                address_override: None,
+            }],
             enable_ssh: false,
             ssh: None,
         })

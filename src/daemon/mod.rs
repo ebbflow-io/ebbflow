@@ -1,19 +1,19 @@
 pub mod connection;
 
-use crate::dns::DnsResolver;
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
-use crate::signal::{SignalSender, SignalReceiver};
-use std::sync::Arc;
-use std::net::SocketAddrV4;
-use tokio::sync::Semaphore;
+use crate::dns::DnsResolver;
+use crate::signal::{SignalReceiver, SignalSender};
+use futures::future::select;
+use futures::future::Either;
+use parking_lot::Mutex;
+use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
-use rand::rngs::SmallRng;
-use tokio_rustls::TlsConnector;
 use rustls::{ClientConfig, RootCertStore};
-use parking_lot::Mutex;
-use futures::future::Either;
-use futures::future::select;
+use std::net::SocketAddrV4;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio_rustls::TlsConnector;
 
 const EBBFLOW_DNS: &str = "preview.ebbflow.io";
 const EBBFLOW_PORT: u16 = 443;
@@ -30,11 +30,19 @@ impl SharedInfo {
         Self::innernew(None, key, roots).await
     }
 
-    pub async fn new_with_ebbflow_overrides(hardcoded_ebbflow_addr: SocketAddrV4, key: String, roots: RootCertStore) -> Result<Self, ()> {
+    pub async fn new_with_ebbflow_overrides(
+        hardcoded_ebbflow_addr: SocketAddrV4,
+        key: String,
+        roots: RootCertStore,
+    ) -> Result<Self, ()> {
         Self::innernew(Some(hardcoded_ebbflow_addr), key, roots).await
     }
 
-    async fn innernew(overriddenmaybe: Option<SocketAddrV4>, key: String, roots: RootCertStore) -> Result<Self, ()> {
+    async fn innernew(
+        overriddenmaybe: Option<SocketAddrV4>,
+        key: String,
+        roots: RootCertStore,
+    ) -> Result<Self, ()> {
         Ok(Self {
             dns: DnsResolver::new().await?,
             key: Mutex::new(key),
@@ -65,7 +73,11 @@ impl SharedInfo {
         if let Some(overridden) = self.hardcoded_ebbflow_addr {
             return overridden.clone();
         }
-        let ips = self.dns.ips(EBBFLOW_DNS).await.unwrap_or_else(|_| Vec::new());
+        let ips = self
+            .dns
+            .ips(EBBFLOW_DNS)
+            .await
+            .unwrap_or_else(|_| Vec::new());
 
         // TODO: Add fallback ips to this list
 
@@ -75,7 +87,9 @@ impl SharedInfo {
     }
 
     pub fn ebbflow_dns(&self) -> webpki::DNSName {
-        webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS).unwrap().to_owned()
+        webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS)
+            .unwrap()
+            .to_owned()
     }
 }
 
@@ -95,13 +109,11 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
         match select(
             Box::pin(async move { ourreceiver.wait().await }),
             Box::pin(async move { inner_run_endpoint(info, args, receiver).await }),
-        ).await {
-            Either::Left(_) => {
-                debug!("Endpoint runner told to stop")
-            }
-            Either::Right(_) => {
-                debug!("Unreachable? inner_run_endpoint finished")
-            }
+        )
+        .await
+        {
+            Either::Left(_) => debug!("Endpoint runner told to stop"),
+            Either::Right(_) => debug!("Unreachable? inner_run_endpoint finished"),
         }
     });
 }
@@ -127,7 +139,10 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
         // We have a permit, start a connection
         let receiverc = receiver.clone();
         let args = create_args(&info, &args, ccfg.clone()).await;
-        debug!("A new connection to ebbflow will be established {} {:?}", args.endpoint, args.local_addr);
+        debug!(
+            "A new connection to ebbflow will be established {} {:?}",
+            args.endpoint, args.local_addr
+        );
         tokio::spawn(async move {
             run_connection(receiverc, args, idlepermit).await;
             drop(maxpermit);
@@ -135,7 +150,11 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
     }
 }
 
-async fn create_args(info: &Arc<SharedInfo>, args: &EndpointArgs, ccfg: Arc<ClientConfig>) -> EndpointConnectionArgs {
+async fn create_args(
+    info: &Arc<SharedInfo>,
+    args: &EndpointArgs,
+    ccfg: Arc<ClientConfig>,
+) -> EndpointConnectionArgs {
     let connector = TlsConnector::from(ccfg);
 
     EndpointConnectionArgs {

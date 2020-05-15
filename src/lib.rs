@@ -1,16 +1,17 @@
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
-use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo,};
+use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
-use crate::config::{Endpoint, ConfigError, EbbflowDaemonConfig};
+use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
 use crate::signal::SignalSender;
-use std::sync::Arc;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use rustls::RootCertStore;
 use futures::future::BoxFuture;
+use rustls::RootCertStore;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 use std::time::Duration;
 
 const MAX_MAX_IDLE: usize = 100;
@@ -19,11 +20,10 @@ const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
 const LOAD_CONFIG_DELAY: Duration = Duration::from_secs(60);
 
 pub mod config;
-pub mod dns;
 pub mod daemon;
+pub mod dns;
 pub mod messaging;
 pub mod signal;
-
 
 struct DaemonRunner {
     endpoints: HashMap<String, EndpointInstance>,
@@ -67,15 +67,18 @@ impl DaemonRunner {
                 Entry::Occupied(mut oe) => {
                     // if the same, do nothing
                     let current_instance = oe.get();
-                    
+
                     if current_instance.existing_config == endpoint {
-                        trace!("Configuration for an endpoint did not change, doing nothing {}", endpoint.dns);
-                        // do nothing!!s
+                        trace!(
+                            "Configuration for an endpoint did not change, doing nothing {}",
+                            endpoint.dns
+                        );
+                    // do nothing!!s
                     } else {
                         debug!("Configuration for an endpoint CHANGED, will stop existing and start new one {}", endpoint.dns);
                         // Stop the existing one
                         current_instance.stop_sender.send_signal();
-                        
+
                         // Create a new one
                         let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
 
@@ -95,7 +98,7 @@ impl DaemonRunner {
                     });
                 }
             }
-        }        
+        }
     }
 
     pub fn update_roots(&self, roots: RootCertStore) {
@@ -104,7 +107,9 @@ impl DaemonRunner {
 }
 
 pub fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) -> SignalSender {
-    let address = e.address_override.unwrap_or_else(|| "127.0.0.1".to_string());
+    let address = e
+        .address_override
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     let ip = address.parse().unwrap();
 
@@ -131,8 +136,12 @@ pub fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) 
     sender
 }
 
-pub async fn run_daemon<CFGR, ROOTR>(initial_config: EbbflowDaemonConfig, info: Arc<SharedInfo>, cfg_reload: CFGR, root_reload: ROOTR)
-where
+pub async fn run_daemon<CFGR, ROOTR>(
+    initial_config: EbbflowDaemonConfig,
+    info: Arc<SharedInfo>,
+    cfg_reload: CFGR,
+    root_reload: ROOTR,
+) where
     CFGR: Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>,
     ROOTR: Fn() -> Option<RootCertStore>,
 {

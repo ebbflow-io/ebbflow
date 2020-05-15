@@ -1,8 +1,8 @@
-use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::ResolverOpts;
-use trust_dns_resolver::config::ResolverConfig;
-use trust_dns_resolver::config::NameServerConfigGroup;
 use std::net::Ipv4Addr;
+use trust_dns_resolver::config::NameServerConfigGroup;
+use trust_dns_resolver::config::ResolverConfig;
+use trust_dns_resolver::config::ResolverOpts;
+use trust_dns_resolver::TokioAsyncResolver;
 
 pub struct DnsResolver {
     trust: TokioAsyncResolver,
@@ -20,28 +20,25 @@ impl DnsResolver {
         let mut group = NameServerConfigGroup::cloudflare();
         group.merge(NameServerConfigGroup::google());
         group.merge(NameServerConfigGroup::quad9());
-        let config = ResolverConfig::from_parts(
-            None,
-            vec![],
-            group,
-        );
+        let config = ResolverConfig::from_parts(None, vec![], group);
 
-        let r = TokioAsyncResolver::tokio(config, opts).await
-            .map_err(|e| {
-                ()
-            })?;
-        Ok(Self {
-            trust: r,
-        })
+        let r = TokioAsyncResolver::tokio(config, opts)
+            .await
+            .map_err(|e| ())?;
+        Ok(Self { trust: r })
     }
 
     pub async fn ips(&self, domain: &str) -> Result<Vec<Ipv4Addr>, ()> {
-        let ips = match tokio::time::timeout(TIMEOUT, self.trust.ipv4_lookup(domain)).await.map_err(|_| ())? {
+        let ips = match tokio::time::timeout(TIMEOUT, self.trust.ipv4_lookup(domain))
+            .await
+            .map_err(|_| ())?
+        {
             Err(e) => {
                 if let trust_dns_resolver::error::ResolveErrorKind::NoRecordsFound {
                     query: _,
                     valid_until: _,
-                } = e.kind() {
+                } = e.kind()
+                {
                     debug!("No records for domain {}", domain);
                     return Ok(vec![]);
                 }

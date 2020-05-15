@@ -5,14 +5,17 @@ extern crate log;
 #[cfg(test)]
 mod basic_tests_v0 {
     use crate::mockebb::listen_and_process;
-    use tokio::net::TcpStream;
+    use crate::mockebb::load_root;
+    use ebbflow::{
+        config::ConfigError, config::EbbflowDaemonConfig, config::Endpoint, daemon::SharedInfo,
+        run_daemon,
+    };
+    use futures::future::BoxFuture;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpListener;
+    use tokio::net::TcpStream;
     use tokio::prelude::*;
-    use crate::mockebb::load_root;
-    use ebbflow::{run_daemon, daemon::SharedInfo, config::EbbflowDaemonConfig, config::ConfigError, config::Endpoint};
-    use futures::future::BoxFuture;
-        use std::sync::Arc;
 
     const MOCKEBBSPAWNDELAY: Duration = Duration::from_millis(100);
 
@@ -35,7 +38,9 @@ mod basic_tests_v0 {
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
         info!("Spawned server");
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
-        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport)).await.unwrap();
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
         info!("Connected");
 
         let mut server = serverconnhandle.await.unwrap().unwrap();
@@ -54,7 +59,9 @@ mod basic_tests_v0 {
     }
 
     async fn get_one_proxied_connection(port: usize) -> Result<TcpStream, std::io::Error> {
-        let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
+        let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
 
         let (socket, _) = listener.accept().await?;
         info!("Got a proxied connection to the server, giving back");
@@ -62,29 +69,30 @@ mod basic_tests_v0 {
     }
 
     async fn start_basic_daemon(ebbport: usize, serverport: usize) {
-
         let cfg = EbbflowDaemonConfig {
             key: "asdf".to_string(),
-            endpoints: vec![
-                Endpoint {
-                    port: serverport as u16,
-                    dns: "ebbflow.io".to_string(),
-                    maxconns: 1000,
-                    idleconns_override: Some(1),
-                    address_override: None,
-                }
-            ],
+            endpoints: vec![Endpoint {
+                port: serverport as u16,
+                dns: "ebbflow.io".to_string(),
+                maxconns: 1000,
+                idleconns_override: Some(1),
+                address_override: None,
+            }],
             enable_ssh: false,
             ssh: None,
         };
-        let info = SharedInfo::new_with_ebbflow_overrides(format!("127.0.0.1:{}", ebbport).parse().unwrap(), "asdfasdf".to_string(), load_root()).await.unwrap();
+        let info = SharedInfo::new_with_ebbflow_overrides(
+            format!("127.0.0.1:{}", ebbport).parse().unwrap(),
+            "asdfasdf".to_string(),
+            load_root(),
+        )
+        .await
+        .unwrap();
         run_daemon(cfg, Arc::new(info), config_reload, dummyroot).await;
     }
 
     fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {
-        Box::pin(async {
-            Err(ConfigError::FileNotFound)
-        })
+        Box::pin(async { Err(ConfigError::FileNotFound) })
     }
 
     fn dummyroot() -> Option<rustls::RootCertStore> {
