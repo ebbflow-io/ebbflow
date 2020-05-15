@@ -70,7 +70,7 @@ mod basic_tests_v0 {
                     port: serverport as u16,
                     dns: "ebbflow.io".to_string(),
                     maxconns: 1000,
-                    idleconns_override: None,
+                    idleconns_override: Some(1),
                     address_override: None,
                 }
             ],
