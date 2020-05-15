@@ -77,6 +77,22 @@ pub async fn listen_and_process(port_for_customers: usize, port_for_tested_clien
             clienttestedstream.write_all(&msgvec[..]).await.unwrap();
             clienttestedstream.flush().await.unwrap();
             info!("Wrote message to {:?}", msg);
+
+            // receive message
+            let mut lenbuf: [u8; 4] = [0; 4];
+            clienttestedstream.read_exact(&mut lenbuf[..]).await.unwrap();
+            let len = u32::from_be_bytes(lenbuf);
+
+            let mut msgbuf = vec![0; len as usize];
+            clienttestedstream.read_exact(&mut msgbuf[..]).await.unwrap();
+
+            let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
+            if let Message::StartTrafficResponseV0(_inner) = msg {
+                info!("Got message from daemon {:?}", msg);
+            } else {
+                panic!("asdfas");
+            }
+
             tokio::spawn(copyezcopy(clienttestedstream, socket));
         }
     });

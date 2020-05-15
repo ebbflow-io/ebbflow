@@ -17,6 +17,7 @@ pub enum Message {
     EnableDisableResponseV0,
     HelloResponseV0(HelloResponseV0),
     StartTrafficV0,
+    StartTrafficResponseV0(StartTrafficResponseV0),
 }
 
 impl From<serde_cbor::Error> for MessageError {
@@ -62,6 +63,7 @@ impl Message {
             5 => Ok(Message::EnableDisableResponseV0),
             6 => Ok(Message::HelloResponseV0(serde_cbor::from_slice(&payload)?)),
             7 => Ok(Message::StartTrafficV0),
+            8 => Ok(Message::StartTrafficResponseV0(serde_cbor::from_slice(&payload)?)),
             _ => Err(MessageError::UnknownMessage),
         }
     }
@@ -76,6 +78,7 @@ impl Message {
             EnableDisableResponseV0 => vec![],
             HelloResponseV0(x) => serde_cbor::to_vec(&x)?,
             StartTrafficV0 => vec![],
+            StartTrafficResponseV0(x) => serde_cbor::to_vec(&x)?,
         })
     }
 
@@ -89,6 +92,7 @@ impl Message {
             EnableDisableResponseV0 => 5,
             HelloResponseV0(_) => 6,
             StartTrafficV0 => 7,
+            StartTrafficResponseV0(_) => 8,
         }
     }
 }
@@ -163,6 +167,11 @@ pub enum HelloResponseIssue {
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct HelloResponseV0 {
     pub issue: Option<HelloResponseIssue>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct StartTrafficResponseV0 {
+    pub open_local_success_ready: bool,
 }
 
 #[cfg(test)]

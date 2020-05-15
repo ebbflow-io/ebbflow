@@ -9,7 +9,7 @@ use tokio_rustls::client::TlsStream;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::prelude::*;
 use crate::signal::SignalReceiver;
-use crate::messaging::{Message, HelloV0, MessageError, HelloResponseIssue};
+use crate::messaging::{Message, HelloV0, MessageError, HelloResponseIssue, StartTrafficResponseV0};
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -57,7 +57,7 @@ pub enum EndpointConnectionType {
 }
 
 pub async fn run_connection(receiver: SignalReceiver, args: EndpointConnectionArgs, idle_permit: tokio::sync::OwnedSemaphorePermit) {
-    let stream = match establish_ebbflow_connection(receiver.clone(), &args).await {
+    let (ebbstream, localtcp) = match establish_ebbflow_connection(receiver.clone(), &args).await {
         Ok(x) => {
             trace!("A connection finished gracefully");
             // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
@@ -85,7 +85,7 @@ pub async fn run_connection(receiver: SignalReceiver, args: EndpointConnectionAr
     };
     // TODO: Delay if we cannot connect locally
 
-    match proxy_data(stream, &args, receiver).await {
+    match proxy_data(ebbstream, localtcp, &args, receiver).await {
         Ok(_) => {},
         Err(e) => {
             info!("error from proxy_data {:?}", e);
@@ -93,7 +93,7 @@ pub async fn run_connection(receiver: SignalReceiver, args: EndpointConnectionAr
     }
 }
 
-async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &EndpointConnectionArgs) -> Result<TlsStream<TcpStream>, ConnectionError> {
+async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &EndpointConnectionArgs) -> Result<(TlsStream<TcpStream>, TcpStream), ConnectionError> {
     // Connect to Ebbflow
     let mut tlsstream = connect_ebbflow(args).await?;
 
@@ -122,7 +122,7 @@ async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &Endpo
     }
 
     // Await Connection
-    let stream = match futures::future::select(
+    let mut stream = match futures::future::select(
         receiverfut,
        Box::pin(async move {await_traffic_start(tlsstream).await}),
     ).await {
@@ -135,13 +135,28 @@ async fn establish_ebbflow_connection(mut receiver: SignalReceiver, args: &Endpo
         }
     };
 
-    Ok(stream)
+    // Traffic start, connect local real quick
+    // We have some bytes and will proxy locally. First lets connect local
+    let local = match connect_local(args.local_addr.clone()).await {
+        Ok(localstream) => {
+            trace!("Connected to local address {:?} for endpoint {}", args.local_addr, args.endpoint);
+            let response = starttrafficresponse(true)?;
+            stream.write_all(&response[..]).await?;
+            localstream
+        }
+        Err(e) => {
+            warn!("Error connecting to local address {:?} for endpoint {} {:?}", args.local_addr, args.endpoint, e);
+            let response = starttrafficresponse(false)?;
+            stream.write_all(&response[..]).await?;
+            return Err(e);
+        }
+    };
+
+    
+    Ok((stream, local))
 }
 
-async fn proxy_data(mut tlsstream: TlsStream<TcpStream>, args: &EndpointConnectionArgs, mut receiver: SignalReceiver) -> Result<(), ConnectionError> {
-    // We have some bytes and will proxy locally. First lets connect local
-    let mut local = connect_local(args.local_addr.clone()).await?;
-
+async fn proxy_data(mut tlsstream: TlsStream<TcpStream>, mut local: TcpStream, args: &EndpointConnectionArgs, mut receiver: SignalReceiver) -> Result<(), ConnectionError> {
     // Now we have both, let's create the proxy future, which we can hard-abort
     let (proxyabortable, handle) = futures::future::abortable(Box::pin(async move {
         proxy(&mut local, &mut tlsstream).await
@@ -214,6 +229,13 @@ fn create_hello(args: &EndpointConnectionArgs) -> Result<Vec<u8>, ConnectionErro
     };
     let hello = HelloV0::new(args.key.clone(), t, args.endpoint.clone());
     let message = Message::HelloV0(hello);
+    Ok(message.to_wire_message()?)
+}
+
+fn starttrafficresponse(good: bool) -> Result<Vec<u8>, ConnectionError> {
+    let message = Message::StartTrafficResponseV0(StartTrafficResponseV0 {
+        open_local_success_ready: good,
+    });
     Ok(message.to_wire_message()?)
 }
 
