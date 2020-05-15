@@ -24,7 +24,7 @@ impl DnsResolver {
 
         let r = TokioAsyncResolver::tokio(config, opts)
             .await
-            .map_err(|e| ())?;
+            .map_err(|_e| ())?;
         Ok(Self { trust: r })
     }
 

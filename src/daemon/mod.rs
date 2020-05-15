@@ -2,7 +2,7 @@ pub mod connection;
 
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
 use crate::dns::DnsResolver;
-use crate::signal::{SignalReceiver, SignalSender};
+use crate::signal::SignalReceiver;
 use futures::future::select;
 use futures::future::Either;
 use parking_lot::Mutex;

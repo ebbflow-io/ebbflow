@@ -194,7 +194,7 @@ mod tests {
             key: key.to_string(),
             endpoint_type: etype,
             endpoint_value: endpoint.to_string(),
-            meta: meta.clone(),
+            meta: meta,
         };
 
         let message = Message::HelloV0(hv0);

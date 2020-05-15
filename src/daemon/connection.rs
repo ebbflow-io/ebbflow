@@ -180,7 +180,7 @@ async fn establish_ebbflow_connection(
 async fn proxy_data(
     mut tlsstream: TlsStream<TcpStream>,
     mut local: TcpStream,
-    args: &EndpointConnectionArgs,
+    _args: &EndpointConnectionArgs,
     mut receiver: SignalReceiver,
 ) -> Result<(), ConnectionError> {
     // Now we have both, let's create the proxy future, which we can hard-abort
@@ -200,7 +200,7 @@ async fn proxy_data(
             tokio::spawn(readf); // This lets the future continue running until we kill it
             tokio::time::delay_for(KILL_ACTIVE_DELAY).await;
             handle.abort();
-            return Ok(());
+            Ok(())
         }
         // The connection ran its course, but remember it was an abortable future so we need to look at that result first
         Either::Right((proxyresult, _r)) => {
@@ -260,7 +260,7 @@ async fn await_traffic_start(
     let message = await_message(&mut tlsstream).await?;
     match message {
         Message::StartTrafficV0 => Ok(tlsstream),
-        _ => return Err(ConnectionError::UnexpectedMessage),
+        _ => Err(ConnectionError::UnexpectedMessage),
     }
 }
 
