@@ -12,18 +12,25 @@ use tokio::prelude::*;
 use tokio::time::timeout as tokiotimeout;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
+use rand::rngs::SmallRng;
+use rand::Rng;
+use rand::SeedableRng;
+use tokio::time::timeout;
+use std::time::Instant;
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
-const SHORT_TIMEOUT: Duration = Duration::from_millis(500);
+const SHORT_TIMEOUT: Duration = Duration::from_millis(1_000);
 const KILL_ACTIVE_DELAY: Duration = Duration::from_secs(60);
-const BAD_ERROR_DELAY: Duration = Duration::from_secs(30);
+const BAD_ERROR_DELAY: Duration = Duration::from_secs(55);
 const MIN_EBBFLOW_ERROR_DELAY: Duration = Duration::from_secs(5);
+const MAX_IDLE_CONNETION_TIME: Duration = Duration::from_secs(60 * 62); // at least an hour
 
 #[derive(Debug)]
 enum ConnectionError {
     Io(IoError),
     Timeout(&'static str),
     Messaging(MessageError),
+    BadRequest,
     UnexpectedMessage,
     Forbidden,
     NotFound,
@@ -58,28 +65,29 @@ pub enum EndpointConnectionType {
     Tls,
 }
 
+/// Entry point for establishing an individual connection to Ebbflow, awaiting a connection, and then proxying data between the two.
 pub async fn run_connection(
     receiver: SignalReceiver,
     args: EndpointConnectionArgs,
     idle_permit: tokio::sync::OwnedSemaphorePermit,
 ) {
-    let (ebbstream, localtcp) = match establish_ebbflow_connection(receiver.clone(), &args).await {
-        Ok(x) => {
+    let (ebbstream, localtcp, now) = match timeout(MAX_IDLE_CONNETION_TIME, establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args)).await {
+        Ok(Ok(x)) => {
             trace!("A connection finished gracefully");
             // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
-            // IDLE connections, not total.
+            // IDLE connections, not total, so lets drop the permit to allow another idle conn to start up
             drop(idle_permit);
             x
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             match e {
-                ConnectionError::Forbidden | ConnectionError::NotFound => {
+                ConnectionError::Forbidden | ConnectionError::NotFound | ConnectionError::BadRequest => {
                     warn!(
                         "A connection for endpoint {} failed due to {:?}",
                         args.endpoint, e
                     );
                     info!("Bad error delay");
-                    tokio::time::delay_for(BAD_ERROR_DELAY).await;
+                    jittersleep1p5(BAD_ERROR_DELAY).await;
                     // We should sleep to avoid spamming, as NotFound and Forbidden errors
                     // are unlikely to be resolved anytime soon.
                 }
@@ -90,14 +98,20 @@ pub async fn run_connection(
                     );
                 }
             }
-            info!("Minimum Delay");
-            tokio::time::delay_for(MIN_EBBFLOW_ERROR_DELAY).await;
+            trace!("Minimum Delay");
+            jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
+            return;
+        }
+        Err(_e) => {
+            debug!("A connection was idle for {:?} so it was terminated and we will retry", MAX_IDLE_CONNETION_TIME);
             return;
         }
     };
-    // TODO: Delay if we cannot connect locally
 
-    match proxy_data(ebbstream, localtcp, &args, receiver).await {
+    debug!("Connection handshake complete and a local connection has been established, proxying data");
+
+    // We have two connections that are ready to be proxied, lesgo
+    match proxy_data(ebbstream, localtcp, &args, receiver, now).await {
         Ok(_) => {}
         Err(e) => {
             info!("error from proxy_data {:?}", e);
@@ -105,10 +119,13 @@ pub async fn run_connection(
     }
 }
 
-async fn establish_ebbflow_connection(
+/// This waits for a connection to Ebbflow, and only returns with a valid connection to the local server.
+///
+/// Specifically, this will inform Ebbflow if the local connection is ready or not after it connects locally.
+async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
     mut receiver: SignalReceiver,
     args: &EndpointConnectionArgs,
-) -> Result<(TlsStream<TcpStream>, TcpStream), ConnectionError> {
+) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     // Connect to Ebbflow
     let mut tlsstream = connect_ebbflow(args).await?;
 
@@ -121,7 +138,7 @@ async fn establish_ebbflow_connection(
     tlsstream.write_all(&hello[..]).await?;
     tlsstream.flush().await?;
 
-    // Receive Response
+    // Receive Response, timed out as Ebbflow should be quick
     let message = tos(
         await_message(&mut tlsstream),
         "error waiting for hello response",
@@ -131,15 +148,17 @@ async fn establish_ebbflow_connection(
         Message::HelloResponseV0(hr) => match hr.issue {
             Some(HelloResponseIssue::Forbidden) => return Err(ConnectionError::Forbidden),
             Some(HelloResponseIssue::NotFound) => return Err(ConnectionError::NotFound),
+            Some(HelloResponseIssue::BadRequest) => return Err(ConnectionError::BadRequest),
             None => {} // Yay, we can continue!
         },
         _ => return Err(ConnectionError::UnexpectedMessage),
     }
+    debug!("Connection handshake complete, awaitng TrafficStart");
 
     // Await Connection
     let mut stream = match futures::future::select(
         receiverfut,
-        Box::pin(async move { await_traffic_start(tlsstream).await }),
+        Box::pin(async move { await_traffic_start(tlsstream).await }), // No timeout, as the connection can be idle for a while
     )
     .await
     {
@@ -150,8 +169,8 @@ async fn establish_ebbflow_connection(
         Either::Right((readresult, _r)) => readresult?,
     };
 
+    let now = Instant::now();
     // Traffic start, connect local real quick
-    // We have some bytes and will proxy locally. First lets connect local
     let local = match connect_local(args.local_addr.clone()).await {
         Ok(localstream) => {
             trace!(
@@ -173,8 +192,9 @@ async fn establish_ebbflow_connection(
             return Err(e);
         }
     };
+    warn!("Traffic notification until connected locally {:?}", now.elapsed());
 
-    Ok((stream, local))
+    Ok((stream, local, now))
 }
 
 async fn proxy_data(
@@ -182,11 +202,12 @@ async fn proxy_data(
     mut local: TcpStream,
     _args: &EndpointConnectionArgs,
     mut receiver: SignalReceiver,
+    start: Instant,
 ) -> Result<(), ConnectionError> {
     // Now we have both, let's create the proxy future, which we can hard-abort
     let (proxyabortable, handle) =
         futures::future::abortable(Box::pin(
-            async move { proxy(&mut local, &mut tlsstream).await },
+            async move { proxy(&mut local, &mut tlsstream, start).await },
         ));
 
     match futures::future::select(
@@ -198,7 +219,7 @@ async fn proxy_data(
         // If the same receiver from above fires, let's sleep, then kill the connection
         Either::Left((_, readf)) => {
             tokio::spawn(readf); // This lets the future continue running until we kill it
-            tokio::time::delay_for(KILL_ACTIVE_DELAY).await;
+            jittersleep1p5(KILL_ACTIVE_DELAY).await;
             handle.abort();
             Ok(())
         }
@@ -238,7 +259,7 @@ async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, 
 
     if len > 50 * 1024 {
         return Err(ConnectionError::Messaging(MessageError::Internal(
-            "message too big",
+            "message too big safeguard",
         )));
     }
 
@@ -281,17 +302,19 @@ fn starttrafficresponse(good: bool) -> Result<Vec<u8>, ConnectionError> {
     Ok(message.to_wire_message()?)
 }
 
+/// Actually transfer the bytes between the two parties
 async fn proxy(
     local: &mut TcpStream,
     ebbflow: &mut TlsStream<TcpStream>,
+    start: Instant,
 ) -> Result<(), ConnectionError> {
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
 
     let local2ebb =
-        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter).await });
+        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start.clone()).await });
     let ebb2local =
-        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter).await });
+        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start.clone()).await });
 
     match futures::future::select(local2ebb, ebb2local).await {
         Either::Left((_server_read_res, _c2s_future)) => (),
@@ -301,15 +324,19 @@ async fn proxy(
 }
 
 // ezpzlemonsqueezy
-async fn copy_bytes_ez<R, W>(r: &mut R, w: &mut W) -> Result<(), ConnectionError>
+async fn copy_bytes_ez<R, W>(r: &mut R, w: &mut W, start: Instant) -> Result<(), ConnectionError>
 where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
-    let mut buf = [0; 10 * 1024];
-
+    let mut buf = vec![0; 10 * 1024];
+    let mut first = true;
     loop {
         let n = r.read(&mut buf[0..]).await?;
+        if first {
+            warn!("First bytes read elapsed {:?}", start.elapsed());
+            first = false;
+        }
 
         if n == 0 {
             return Ok(());
@@ -319,6 +346,7 @@ where
     }
 }
 
+/// long timeout
 async fn tol<T>(future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
 where
     T: Future,
@@ -329,6 +357,7 @@ where
     }
 }
 
+/// short timeout
 async fn tos<T>(future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
 where
     T: Future,
@@ -337,4 +366,13 @@ where
         Ok(r) => Ok(r),
         Err(_) => Err(ConnectionError::Timeout(msg)),
     }
+}
+
+// Sleeps somewhere between 1 and 1.5 of the `dur`
+async fn jittersleep1p5(dur: Duration) {
+    let mut small_rng = SmallRng::from_entropy();
+    let max = dur.mul_f32(1.5);
+    let millis = small_rng.gen_range(dur.as_millis(), max.as_millis());
+    trace!("jittersleep {}ms", millis);
+    tokio::time::delay_for(Duration::from_millis(millis as u64)).await;
 }

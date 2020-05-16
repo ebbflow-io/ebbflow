@@ -8,12 +8,16 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
+        .filter_level(log::LevelFilter::Debug)
+        .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
+
+    let hostname: String = hostname::get().unwrap().to_str().unwrap().to_string();
 
     let config = EbbflowDaemonConfig::load_from_file().await.unwrap();
     let roots = load_roots().unwrap();
-    let sharedinfo = Arc::new(SharedInfo::new(config.key.clone(), roots).await.unwrap());
+    //let sharedinfo = Arc::new(SharedInfo::new(config.key.clone(), roots).await.unwrap());
+    let sharedinfo = Arc::new(SharedInfo::new_with_ebbflow_overrides("127.0.0.1:7070".parse().unwrap(),config.key.clone(), roots, hostname).await.unwrap());
 
     run_daemon(config, sharedinfo, config_reload, load_roots).await;
 }

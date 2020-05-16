@@ -39,15 +39,15 @@ impl EbbflowDaemonConfig {
     // }
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
         Ok(EbbflowDaemonConfig {
-            key: "asdf".to_string(),
+            key: "ebb_hst_AicTDDfeUh0MnzZsKsn6hBiLlYP0vfutj5ztMd5KBh".to_string(),
             endpoints: vec![Endpoint {
-                port: 8000,
-                dns: "ebbflow.io".to_string(),
-                maxconns: 1000,
-                idleconns_override: None,
+                port: 41402,
+                dns: "preview.ebbflow.io".to_string(),
+                maxconns: 2,
+                idleconns_override: Some(1),
                 address_override: None,
             }],
-            enable_ssh: false,
+            enable_ssh: true,
             ssh: None,
         })
         //Err(ConfigError::FileNotFound)
@@ -76,9 +76,9 @@ pub struct Endpoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ssh {
     /// the maximum amount of open connections
-    maxconns: u16,
+    pub maxconns: u16,
     /// The local port, defaults to 22
-    port: u16,
+    pub port: u16,
     /// The hostname to use as the target, defaults the OS provided Hostname
-    hostname_override: Option<String>,
+    pub hostname_override: Option<String>,
 }

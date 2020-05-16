@@ -166,6 +166,7 @@ pub struct StatusV0 {
 pub enum HelloResponseIssue {
     NotFound,
     Forbidden,
+    BadRequest,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]

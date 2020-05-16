@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio_rustls::TlsConnector;
 
-const EBBFLOW_DNS: &str = "preview.ebbflow.io";
+const EBBFLOW_DNS: &str = "preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
 const EBBFLOW_PORT: u16 = 443;
 
 pub struct SharedInfo {
@@ -23,32 +23,40 @@ pub struct SharedInfo {
     key: Mutex<String>,
     roots: Mutex<RootCertStore>,
     hardcoded_ebbflow_addr: Option<SocketAddrV4>,
+    hostname: String,
 }
 
 impl SharedInfo {
-    pub async fn new(key: String, roots: RootCertStore) -> Result<Self, ()> {
-        Self::innernew(None, key, roots).await
+    pub async fn new(key: String, roots: RootCertStore, hostname: String) -> Result<Self, ()> {
+        Self::innernew(None, key, roots, hostname).await
     }
 
     pub async fn new_with_ebbflow_overrides(
         hardcoded_ebbflow_addr: SocketAddrV4,
         key: String,
         roots: RootCertStore,
+        hostname: String,
     ) -> Result<Self, ()> {
-        Self::innernew(Some(hardcoded_ebbflow_addr), key, roots).await
+        Self::innernew(Some(hardcoded_ebbflow_addr), key, roots, hostname).await
     }
 
     async fn innernew(
         overriddenmaybe: Option<SocketAddrV4>,
         key: String,
         roots: RootCertStore,
+        hostname: String,
     ) -> Result<Self, ()> {
         Ok(Self {
             dns: DnsResolver::new().await?,
             key: Mutex::new(key),
             roots: Mutex::new(roots),
             hardcoded_ebbflow_addr: overriddenmaybe,
+            hostname,
         })
+    }
+
+    pub fn hostname(&self) -> String {
+        self.hostname.clone()
     }
 
     pub fn update_key(&self, newkey: String) {
@@ -80,7 +88,6 @@ impl SharedInfo {
             .unwrap_or_else(|_| Vec::new());
 
         // TODO: Add fallback ips to this list
-
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);
         SocketAddrV4::new(chosen.unwrap().clone(), EBBFLOW_PORT)
@@ -140,9 +147,10 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
         let receiverc = receiver.clone();
         let args = create_args(&info, &args, ccfg.clone()).await;
         debug!(
-            "A new connection to ebbflow will be established {} {:?}",
+            "A new connection to ebbflow will be established for endpoint {} (localaddr: {:?})",
             args.endpoint, args.local_addr
         );
+        trace!("ebbflow addrs {:?} dns {:?}", args.ebbflow_addr, args.ebbflow_dns);
         tokio::spawn(async move {
             run_connection(receiverc, args, idlepermit).await;
             drop(maxpermit);

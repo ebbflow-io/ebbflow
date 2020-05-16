@@ -13,9 +13,11 @@ use std::collections::HashSet;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::time::Duration;
+use std::net::Ipv4Addr;
 
 const MAX_MAX_IDLE: usize = 100;
 const DEFAULT_MAX_IDLE: usize = 8;
+const DEFAULT_MAX_IDLE_SSH: usize = 2;
 const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
 const LOAD_CONFIG_DELAY: Duration = Duration::from_secs(60);
 
@@ -27,6 +29,8 @@ pub mod signal;
 
 struct DaemonRunner {
     endpoints: HashMap<String, EndpointInstance>,
+    /// port max hostname
+    ssh: Option<(SshConfiguration, SignalSender)>,
     info: Arc<SharedInfo>,
 }
 
@@ -35,11 +39,20 @@ struct EndpointInstance {
     existing_config: Endpoint,
 }
 
+#[derive(PartialEq)]
+struct SshConfiguration {
+    port: u16,
+    max: usize,
+    hostname: String,
+    key: String,
+}
+
 impl DaemonRunner {
     pub fn new(info: Arc<SharedInfo>) -> Self {
         Self {
             info,
             endpoints: HashMap::new(),
+            ssh: None,
         }
     }
 
@@ -99,6 +112,47 @@ impl DaemonRunner {
                 }
             }
         }
+
+        if config.enable_ssh {
+            let port = config.ssh.as_ref().map(|sshcfg| sshcfg.port).unwrap_or(22);
+            let max: usize = config.ssh.as_ref().map(|sshcfg| sshcfg.maxconns as usize).unwrap_or(30);
+            let hostname: Option<String> = config.ssh.as_ref().map(|sshcfg| sshcfg.hostname_override.clone()).flatten();
+            let hostname = hostname.unwrap_or_else(|| self.info.hostname());
+            let newkey = config.key.clone();
+
+            let newconfig = SshConfiguration {
+                key: newkey,
+                port,
+                max,
+                hostname,
+            };
+
+            // if its the same, do nothing
+            if if let Some((cfg, s)) = &self.ssh {
+                if cfg != &newconfig {
+                    s.send_signal();
+                    true
+                } else {
+                    false
+                }
+            } else {
+                self.ssh.is_none()
+            } {
+                // start the new one and set it
+                let args = EndpointArgs {
+                    ctype: EndpointConnectionType::Ssh,
+                    idleconns: DEFAULT_MAX_IDLE_SSH,
+                    maxconns: newconfig.max,
+                    endpoint: newconfig.hostname.clone(),
+                    local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
+                };
+
+                let sender = spawn_endpoint_with_args(args, self.info.clone());
+                self.ssh = Some((newconfig, sender));
+            }
+            
+
+        }
     }
 
     pub fn update_roots(&self, roots: RootCertStore) {
@@ -126,6 +180,10 @@ pub fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) 
         local_addr: SocketAddrV4::new(ip, port),
     };
 
+    spawn_endpoint_with_args(args, info)
+}
+
+pub fn spawn_endpoint_with_args(args: EndpointArgs, info: Arc<SharedInfo>) -> SignalSender {
     let sender = SignalSender::new();
     let receiver = sender.new_receiver();
 
