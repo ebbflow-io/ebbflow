@@ -7,5 +7,19 @@ async fn main() {
     println!("Hey, not sleeping done now bye");
 }
 
+async fn init() {
+
+}
+
+async fn set_key() {
+
+}
+
 // init
-// endpoint dns, endpoint port
+// gets keys, sets 
+// status (endpoints and ssh)
+// get config file loc
+
+// disable endpoint <name>
+// disable ssh
+// disable all

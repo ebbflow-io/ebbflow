@@ -16,12 +16,14 @@ mod basic_tests_v0 {
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
     use tokio::prelude::*;
+    use tokio::sync::watch::{channel, Sender, Receiver};
+    use tokio::sync::Notify;
 
     const MOCKEBBSPAWNDELAY: Duration = Duration::from_millis(100);
 
     #[tokio::test]
     async fn basic_bytes() {
-        //logger();
+        // logger();
         let testclientport = 49193;
         let customerport = 49194;
         let serverport = 49195;
@@ -30,7 +32,8 @@ mod basic_tests_v0 {
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned ebb");
 
-        tokio::spawn(start_basic_daemon(testclientport, serverport));
+        start_basic_daemon(testclientport, serverport).await;
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
@@ -73,7 +76,7 @@ mod basic_tests_v0 {
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned ebb");
 
-        tokio::spawn(start_basic_daemon(testclientport, serverport));
+        start_basic_daemon(testclientport, serverport).await;
         info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
@@ -140,30 +143,41 @@ mod basic_tests_v0 {
     }
 
     async fn start_basic_daemon(ebbport: usize, serverport: usize) {
-        let cfg = EbbflowDaemonConfig {
-            key: "asdf".to_string(),
-            endpoints: vec![Endpoint {
-                port: serverport as u16,
-                dns: "ebbflow.io".to_string(),
-                maxconns: 1000,
-                idleconns_override: Some(1),
-                address_override: None,
-            }],
-            enable_ssh: false,
-            ssh: None,
-        };
         let info = SharedInfo::new_with_ebbflow_overrides(
             format!("127.0.0.1:{}", ebbport).parse().unwrap(),
-            "asdfasdf".to_string(),
             load_root(),
+            "hostname".to_string(),
         )
         .await
         .unwrap();
-        run_daemon(cfg, Arc::new(info), config_reload, dummyroot).await;
+
+        // info.update_key("asdfasdf".to_string());
+        
+        tokio::spawn(async move {
+            run_daemon( Arc::new(info), config_reload_maker(serverport), dummyroot, Arc::new(Notify::new())).await;
+        });
     }
 
-    fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {
-        Box::pin(async { Err(ConfigError::FileNotFound) })
+    fn config_reload_maker(serverport: usize) -> std::pin::Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>  + Send + Sync + 'static>> {
+        let z = serverport as u16;
+        Box::pin(move || {
+            Box::pin(async move { 
+                let cfg = EbbflowDaemonConfig {
+                    key: "asdf".to_string(),
+                    endpoints: vec![Endpoint {
+                        port: z,
+                        dns: "ebbflow.io".to_string(),
+                        maxconns: 1000,
+                        idleconns_override: Some(1),
+                        address_override: None,
+                        enabled: true,
+                    }],
+                    enable_ssh: false,
+                    ssh: None,
+                };
+                Ok(cfg)
+            })
+        })
     }
 
     fn dummyroot() -> Option<rustls::RootCertStore> {

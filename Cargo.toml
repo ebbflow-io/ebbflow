@@ -40,6 +40,8 @@ webpki = "0.21"
 trust-dns-resolver = "0.19.5"
 parking_lot = "0.10"
 bitflags = "1.2"
+notify = "5.0.0-pre.2"
+serde_yaml = "0.8"
 
 [dev-dependencies]
 hyper = "0.13"
@@ -55,6 +57,7 @@ depends = "$auto"
 maintainer-scripts="assets/debian"
 assets = [
     ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],
+    ["assets/default.ebbflow.conf.yaml", "/etc/ebbflow/config.yaml", "600"],
     ["target/release/ebbflow", "/usr/bin/", "755"],
     ["target/release/ebbflowd", "/usr/sbin/", "755"]
 ]

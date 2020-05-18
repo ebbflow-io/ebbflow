@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tokio::io::Error as IoError;
+use tokio::io::ErrorKind;
+use crate::CONFIG_FILE;
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -6,6 +10,17 @@ pub enum ConfigError {
     FileNotFound,
     FilePermissions,
     AlreadyExists,
+    Unknown(String),
+}
+
+impl From<IoError> for ConfigError {
+    fn from(ioe: IoError) -> Self {
+        match ioe.kind() {
+            ErrorKind::NotFound => ConfigError::FileNotFound,
+            ErrorKind::PermissionDenied => ConfigError::FilePermissions,
+            _ => ConfigError::Unknown(format!("Unexepected error reading config file {:?}", ioe)),
+        }
+    }
 }
 
 /// Configuration for Ebbflow. Will be parsed to/from a YAML file located at
@@ -24,37 +39,45 @@ pub struct EbbflowDaemonConfig {
 }
 
 impl EbbflowDaemonConfig {
-    // pub fn add_and_save_endpoint_config(endpoint: Endpoint) -> Result<(), ConfigError> {
-    //     // load config
-    //     // add endpoint
-    //         // Check if existing
-    //     // save config
-    //     todo!()
-    // }
-    // pub fn remove_and_save_endpoint_config(dns: &str) -> Result<bool, ConfigError> {
-    //     // load config
-    //     // remove endpoint
-    //     // save config
-    //     todo!()
-    // }
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
-        Ok(EbbflowDaemonConfig {
-            key: "ebb_hst_AicTDDfeUh0MnzZsKsn6hBiLlYP0vfutj5ztMd5KBh".to_string(),
-            endpoints: vec![Endpoint {
-                port: 41402,
-                dns: "preview.ebbflow.io".to_string(),
-                maxconns: 2,
-                idleconns_override: Some(1),
-                address_override: None,
-            }],
-            enable_ssh: true,
-            ssh: None,
-        })
+        let filebytes = fs::read(CONFIG_FILE).await?;
+
+        let parsed: EbbflowDaemonConfig = match serde_yaml::from_slice(&filebytes[..]) {
+            Ok(p) => p,
+            Err(_e) => {
+                warn!("Error parsing configuration file");
+                return Err(ConfigError::Parsing);
+            }
+        };
+
+        Ok(parsed)
+
+        // Ok(EbbflowDaemonConfig {
+        //     key: "ebb_hst_AicTDDfeUh0MnzZsKsn6hBiLlYP0vfutj5ztMd5KBh".to_string(),
+        //     endpoints: vec![Endpoint {
+        //         port: 41402,
+        //         dns: "preview.ebbflow.io".to_string(),
+        //         maxconns: 2,
+        //         idleconns_override: Some(1),
+        //         address_override: None,
+        //         enabled: true,
+        //     }],
+        //     enable_ssh: true,
+        //     ssh: None,
+        // })
         //Err(ConfigError::FileNotFound)
     }
-    // pub async fn save_to_file(&self) -> Result<(), ConfigError> {
-    //     Err(ConfigError::FileNotFound)
-    // }
+    pub async fn save_to_file(&self) -> Result<(), ConfigError> {
+        let b: String = match serde_yaml::to_string(self) {
+            Ok(s) => s,
+            Err(_e) => {
+                warn!("Error parsing current configuration into a YAML file");
+                return Err(ConfigError::Parsing);
+            }
+        };
+
+        Ok(fs::write(CONFIG_FILE, b.as_bytes()).await?)
+    }
 }
 
 /// An Endpoint to host. Provide the DNS name, and the local port. Optionally override the local address,
@@ -71,6 +94,8 @@ pub struct Endpoint {
     pub idleconns_override: Option<usize>,
     /// The address the application runs on locally, defaults to 127.0.0.1
     pub address_override: Option<String>,
+    /// Is this endpoint enabled or disabled?
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

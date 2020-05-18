@@ -15,40 +15,38 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio_rustls::TlsConnector;
 
-const EBBFLOW_DNS: &str = "preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
-const EBBFLOW_PORT: u16 = 443;
+const EBBFLOW_DNS: &str = "s.preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
+const EBBFLOW_PORT: u16 = 7070;
 
 pub struct SharedInfo {
     dns: DnsResolver,
-    key: Mutex<String>,
+    key: Mutex<Option<String>>,
     roots: Mutex<RootCertStore>,
     hardcoded_ebbflow_addr: Option<SocketAddrV4>,
     hostname: String,
 }
 
 impl SharedInfo {
-    pub async fn new(key: String, roots: RootCertStore, hostname: String) -> Result<Self, ()> {
-        Self::innernew(None, key, roots, hostname).await
+    pub async fn new(roots: RootCertStore, hostname: String) -> Result<Self, ()> {
+        Self::innernew(None, roots, hostname).await
     }
 
     pub async fn new_with_ebbflow_overrides(
         hardcoded_ebbflow_addr: SocketAddrV4,
-        key: String,
         roots: RootCertStore,
         hostname: String,
     ) -> Result<Self, ()> {
-        Self::innernew(Some(hardcoded_ebbflow_addr), key, roots, hostname).await
+        Self::innernew(Some(hardcoded_ebbflow_addr), roots, hostname).await
     }
 
     async fn innernew(
         overriddenmaybe: Option<SocketAddrV4>,
-        key: String,
         roots: RootCertStore,
         hostname: String,
     ) -> Result<Self, ()> {
         Ok(Self {
             dns: DnsResolver::new().await?,
-            key: Mutex::new(key),
+            key: Mutex::new(None),
             roots: Mutex::new(roots),
             hardcoded_ebbflow_addr: overriddenmaybe,
             hostname,
@@ -61,10 +59,10 @@ impl SharedInfo {
 
     pub fn update_key(&self, newkey: String) {
         let mut key = self.key.lock();
-        *key = newkey;
+        *key = Some(newkey);
     }
 
-    pub fn key(&self) -> String {
+    pub fn key(&self) -> Option<String> {
         self.key.lock().clone()
     }
 
@@ -85,9 +83,9 @@ impl SharedInfo {
             .dns
             .ips(EBBFLOW_DNS)
             .await
-            .unwrap_or_else(|_| Vec::new());
+            .unwrap_or_else(|_| Vec::new()); // TODO: Return fallback IPs here
 
-        // TODO: Add fallback ips to this list
+
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);
         SocketAddrV4::new(chosen.unwrap().clone(), EBBFLOW_PORT)
@@ -167,7 +165,7 @@ async fn create_args(
 
     EndpointConnectionArgs {
         endpoint: args.endpoint.clone(),
-        key: info.key(),
+        key: info.key().unwrap_or_else(|| "unset".to_string()),
         local_addr: args.local_addr.clone(),
         ctype: args.ctype,
         ebbflow_addr: info.ebbflow_addr().await,

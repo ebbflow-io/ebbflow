@@ -13,13 +13,20 @@ use std::collections::HashSet;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::time::Duration;
-use std::net::Ipv4Addr;
+use std::{pin::Pin, net::Ipv4Addr};
+use tokio::sync::Mutex;
+use tokio::sync::watch::Receiver;
+use tokio::sync::Notify;
+
+/// Path to the Config file, see EbbflowDaemonConfig in the config module.
+pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
+pub const CONFIG_FILE: &str = "/etc/ebbflow/config.yaml"; // Linux
 
 const MAX_MAX_IDLE: usize = 100;
 const DEFAULT_MAX_IDLE: usize = 8;
 const DEFAULT_MAX_IDLE_SSH: usize = 2;
-const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
-const LOAD_CONFIG_DELAY: Duration = Duration::from_secs(60);
+// const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
+const LOAD_ROOTS_DELAY: Duration = Duration::from_secs(60 * 60 * 36); // very rare
 
 pub mod config;
 pub mod daemon;
@@ -27,16 +34,37 @@ pub mod dns;
 pub mod messaging;
 pub mod signal;
 
-struct DaemonRunner {
-    endpoints: HashMap<String, EndpointInstance>,
-    /// port max hostname
-    ssh: Option<(SshConfiguration, SignalSender)>,
-    info: Arc<SharedInfo>,
+pub enum DaemonStatusMeta {
+    Uninitialized,
+    Good,
+}
+
+pub struct DaemonStatus {
+    pub meta: DaemonStatusMeta,
+}
+
+enum EnabledDisabled {
+    Enabled(SignalSender),
+    Disabled,
+}
+
+impl EnabledDisabled {
+    pub fn stop(&mut self) {
+        if let EnabledDisabled::Enabled(sender) = self {
+            sender.send_signal();
+        }
+        *self = EnabledDisabled::Disabled;
+    }
 }
 
 struct EndpointInstance {
-    stop_sender: SignalSender,
+    enabledisable: EnabledDisabled,
     existing_config: Endpoint,
+}
+
+struct SshInstance {
+    existing_config: SshConfiguration,
+    enabledisable: EnabledDisabled,
 }
 
 #[derive(PartialEq)]
@@ -44,10 +72,50 @@ struct SshConfiguration {
     port: u16,
     max: usize,
     hostname: String,
-    key: String,
+}
+
+pub enum EnableDisableTarget {
+    All,
+    Ssh,
+    Endpoint(String),
+}
+
+pub struct DaemonRunner {
+    inner: Mutex<InnerDaemonRunner>,
 }
 
 impl DaemonRunner {
+    pub fn new(info: Arc<SharedInfo>) -> Self {
+        Self {
+            inner: Mutex::new(InnerDaemonRunner::new(info)),
+        }
+    }
+
+    pub async fn update_config(&self, config: EbbflowDaemonConfig) {
+        let mut inner = self.inner.lock().await;
+        inner.update_config(config)
+    }
+
+    pub async fn update_roots(&self, roots: RootCertStore) {
+        let inner = self.inner.lock().await;
+        inner.update_roots(roots);
+    }
+
+    pub async fn status(&self) -> DaemonStatus {
+        let inner = self.inner.lock().await;
+        inner.status()
+    }
+}
+
+struct InnerDaemonRunner {
+    endpoints: HashMap<String, EndpointInstance>,
+    /// port max hostname
+    ssh: Option<SshInstance>,
+    info: Arc<SharedInfo>,
+}
+
+
+impl InnerDaemonRunner {
     pub fn new(info: Arc<SharedInfo>) -> Self {
         Self {
             info,
@@ -57,7 +125,16 @@ impl DaemonRunner {
     }
 
     pub fn update_config(&mut self, mut config: EbbflowDaemonConfig) {
+        self.info.update_key(config.key);
+
+        // We do this so we can later info.key().unwrap().
+        if let None = self.info.key() {
+            error!("ERROR: Unreachable state where we do not have a key to use, but do have an otherwise valid configuration");
+            return;
+        }
+
         let mut set = HashSet::with_capacity(config.endpoints.len());
+        info!("Config updating, {} endpoints", config.endpoints.len());
         for e in config.endpoints.iter() {
             set.insert(e.dns.clone());
         }
@@ -69,7 +146,7 @@ impl DaemonRunner {
             } else {
                 debug!("set compare no longer had existing entry {}", existing_dns);
                 // The set of configs does NOT have this endpoint, we need to stop it.
-                existing_instance.stop_sender.send_signal();
+                existing_instance.enabledisable.stop();
                 // It will stop, new we return false to state we should remove this entry.
                 false
             }
@@ -79,7 +156,7 @@ impl DaemonRunner {
             match self.endpoints.entry(endpoint.dns.clone()) {
                 Entry::Occupied(mut oe) => {
                     // if the same, do nothing
-                    let current_instance = oe.get();
+                    let current_instance = oe.get_mut();
 
                     if current_instance.existing_config == endpoint {
                         trace!(
@@ -89,15 +166,23 @@ impl DaemonRunner {
                     // do nothing!!s
                     } else {
                         debug!("Configuration for an endpoint CHANGED, will stop existing and start new one {}", endpoint.dns);
-                        // Stop the existing one
-                        current_instance.stop_sender.send_signal();
-
-                        // Create a new one
-                        let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
-
+                        
+                        let newenabledisable = if endpoint.enabled {
+                            // Stop the existing one (may not be running anways)
+                            current_instance.enabledisable.stop();
+                            // Create a new one
+                            let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
+                            EnabledDisabled::Enabled(sender)
+                        } else {
+                            // stop the current one. If it wasn't running anways, then this is still OK.
+                            current_instance.enabledisable.stop();
+                            // we weren't running, so just return disabled
+                            EnabledDisabled::Disabled
+                        };
+                        
                         // Insert this new config
                         oe.insert(EndpointInstance {
-                            stop_sender: sender,
+                            enabledisable: newenabledisable,
                             existing_config: endpoint,
                         });
                     }
@@ -106,7 +191,7 @@ impl DaemonRunner {
                     debug!("Configuration for an endpoint that did NOT previously exist found, will create it {}", endpoint.dns);
                     let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
                     ve.insert(EndpointInstance {
-                        stop_sender: sender,
+                        enabledisable: EnabledDisabled::Enabled(sender),
                         existing_config: endpoint,
                     });
                 }
@@ -118,19 +203,16 @@ impl DaemonRunner {
             let max: usize = config.ssh.as_ref().map(|sshcfg| sshcfg.maxconns as usize).unwrap_or(30);
             let hostname: Option<String> = config.ssh.as_ref().map(|sshcfg| sshcfg.hostname_override.clone()).flatten();
             let hostname = hostname.unwrap_or_else(|| self.info.hostname());
-            let newkey = config.key.clone();
 
             let newconfig = SshConfiguration {
-                key: newkey,
                 port,
                 max,
                 hostname,
             };
 
-            // if its the same, do nothing
-            if if let Some((cfg, s)) = &self.ssh {
-                if cfg != &newconfig {
-                    s.send_signal();
+            if if let Some(ref mut sshinstance) = &mut self.ssh {
+                if &sshinstance.existing_config != &newconfig {
+                    sshinstance.enabledisable.stop();
                     true
                 } else {
                     false
@@ -148,15 +230,25 @@ impl DaemonRunner {
                 };
 
                 let sender = spawn_endpoint_with_args(args, self.info.clone());
-                self.ssh = Some((newconfig, sender));
+                self.ssh = Some(SshInstance {
+                    existing_config: newconfig,
+                    enabledisable: EnabledDisabled::Enabled(sender),
+                });
             }
-            
-
+        } else {
+            // maybe they disabled it, let's turn it off.
+            if let Some(ref mut instance) = &mut self.ssh {
+                instance.enabledisable.stop();
+            }
         }
     }
 
     pub fn update_roots(&self, roots: RootCertStore) {
         self.info.update_roots(roots);
+    }
+
+    pub fn status(&self) -> DaemonStatus {
+        todo!()
     }
 }
 
@@ -194,27 +286,50 @@ pub fn spawn_endpoint_with_args(args: EndpointArgs, info: Arc<SharedInfo>) -> Si
     sender
 }
 
-pub async fn run_daemon<CFGR, ROOTR>(
-    initial_config: EbbflowDaemonConfig,
+pub async fn run_daemon<ROOTR>(
     info: Arc<SharedInfo>,
-    cfg_reload: CFGR,
+    cfg_reload: Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> + Send + Sync + 'static>>,
     root_reload: ROOTR,
-) where
-    CFGR: Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>,
-    ROOTR: Fn() -> Option<RootCertStore>,
+    cfg_notifier: Arc<Notify>,
+) -> Arc<DaemonRunner>
+where
+    //CFGR: Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>>>,
+    ROOTR: Fn() -> Option<RootCertStore> + Sync + Send + 'static,
 {
-    let mut runner = DaemonRunner::new(info);
-    runner.update_config(initial_config);
+    let runner = Arc::new(DaemonRunner::new(info));    
+    let runnerc = runner.clone();
 
-    loop {
-        tokio::time::delay_for(LOAD_CONFIG_DELAY).await;
-        debug!("Reloading config and roots");
-        if let Ok(Ok(cfg)) = tokio::time::timeout(LOAD_CFG_TIMEOUT, cfg_reload()).await {
-            runner.update_config(cfg);
-        }
+    let cfgrealoadfn = cfg_reload;
 
-        if let Some(newroots) = root_reload() {
-            runner.update_roots(newroots);
+    tokio::spawn(async move {
+        loop {
+            match cfgrealoadfn().await {
+                Ok(newconfig) => {
+                    debug!("New config loaded successfully");
+                    runnerc.update_config(newconfig).await;
+                    debug!("New config applied");
+                }
+                Err(e) => {
+                    warn!("Error reading new configuration {:?}", e);
+                }
+            }
+            trace!("Now waiting for notification");
+            cfg_notifier.notified().await;
+            trace!("Got a notification");
         }
-    }
+    });
+    let runnerc = runner.clone();
+
+    tokio::spawn(Box::pin(async move {
+        loop {
+            tokio::time::delay_for(LOAD_ROOTS_DELAY).await;
+            if let Some(newroots) = root_reload() {
+                runner.update_roots(newroots).await;
+            } else {
+                warn!("Was unable to load new root certificates from OS, will continue to use existing set.");
+            }
+        }
+    }));
+
+    runnerc
 }
