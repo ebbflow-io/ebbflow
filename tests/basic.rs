@@ -149,12 +149,12 @@ mod basic_tests_v0 {
         let cfg = EbbflowDaemonConfig {
             key: "asdf".to_string(),
             endpoints: vec![],
-            enable_ssh: true,
-            ssh: Some(Ssh {
-                maxconns: 20,
-                port: serverport,
+            ssh: Ssh {
+                port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
                 hostname_override: Some(x),
-            }), // We need to override the SSH port or else it will hit the actual ssh server the host
+                enabled: true,
+                maxconns: 100,
+            },
         };
 
         let (_notify, _arcmutex, _) = start_basic_daemon(testclientport, cfg).await;
@@ -313,12 +313,12 @@ mod basic_tests_v0 {
                     enabled: true,
                 },
             ],
-            enable_ssh: true,
-            ssh: Some(Ssh {
+            ssh: Ssh {
                 maxconns: 1,
                 port: sshp,
                 hostname_override: Some(hn),
-            }),
+                enabled: true,
+            },
         };
 
         tokio::spawn(listen_and_process(customerport, testclientport));
@@ -405,8 +405,12 @@ mod basic_tests_v0 {
                 address_override: None,
                 enabled: true,
             }],
-            enable_ssh: false,
-            ssh: None,
+            ssh: Ssh {
+                port: 22,
+                hostname_override: None,
+                enabled: false,
+                maxconns: 100,
+            },
         }
     }
 

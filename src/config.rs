@@ -32,10 +32,8 @@ pub struct EbbflowDaemonConfig {
     pub key: String,
     /// A list of endpoints to host, see Endpoint
     pub endpoints: Vec<Endpoint>,
-    /// Should SSH be used?
-    pub enable_ssh: bool,
     /// SSH Config overrides, not needed
-    pub ssh: Option<Ssh>,
+    pub ssh: Ssh,
 }
 
 impl EbbflowDaemonConfig {
@@ -88,9 +86,9 @@ pub struct Endpoint {
     pub port: u16,
     /// The DNS name of the endpoint being hosted
     pub dns: String,
-    /// the maximum amount of open connections, defaults to 1000
+    /// the maximum amount of open connections, defaults to 200
     pub maxconns: u16,
-    /// the maxmimum amount of idle connections to Ebbflow, will be capped at 100
+    /// the maxmimum amount of idle connections to Ebbflow, will be capped at X
     pub idleconns_override: Option<usize>,
     /// The address the application runs on locally, defaults to 127.0.0.1
     pub address_override: Option<String>,
@@ -104,6 +102,19 @@ pub struct Ssh {
     pub maxconns: u16,
     /// The local port, defaults to 22
     pub port: u16,
+    /// Is SSH enabled?
+    pub enabled: bool,
     /// The hostname to use as the target, defaults the OS provided Hostname
     pub hostname_override: Option<String>,
+}
+
+impl Ssh {
+    pub fn new(enabled: bool) -> Ssh {
+        Self {
+            maxconns: 20,
+            port: 22,
+            enabled,
+            hostname_override: None,
+        }
+    }
 }

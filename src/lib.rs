@@ -231,24 +231,14 @@ impl InnerDaemonRunner {
         }
 
         // SSH Related
-        let port = config.ssh.as_ref().map(|sshcfg| sshcfg.port).unwrap_or(22);
-        let max: usize = config
-            .ssh
-            .as_ref()
-            .map(|sshcfg| sshcfg.maxconns as usize)
-            .unwrap_or(30);
-        let hostname: Option<String> = config
-            .ssh
-            .as_ref()
-            .map(|sshcfg| sshcfg.hostname_override.clone())
-            .flatten();
+        let hostname: Option<String> = config.ssh.hostname_override.clone();
         let hostname = hostname.unwrap_or_else(|| self.info.hostname());
 
         let newconfig = SshConfiguration {
-            port,
-            max,
+            port: config.ssh.port,
+            max: config.ssh.maxconns as usize,
             hostname,
-            enabled: config.enable_ssh,
+            enabled: config.ssh.enabled,
         };
 
         // If something changed, we know we will stop the existing one
