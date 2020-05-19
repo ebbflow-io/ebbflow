@@ -155,7 +155,7 @@ impl InnerDaemonRunner {
         self.info.update_key(config.key);
 
         // We do this so we can later info.key().unwrap().
-        if let None = self.info.key() {
+        if self.info.key().is_none() {
             error!("ERROR: Unreachable state where we do not have a key to use, but do have an otherwise valid configuration");
             return;
         }
