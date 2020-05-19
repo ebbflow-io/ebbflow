@@ -9,6 +9,7 @@ use rustls::RootCertStore;
 use std::sync::Arc;
 use notify::{Config, Watcher, RecommendedWatcher, RecursiveMode, event::Event, event::EventKind};
 use tokio::sync::Notify;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -17,6 +18,7 @@ async fn main() {
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 
+    // TODO: see if there is an override so if this fails we are still ok?
     let hostname: String = match hostname::get() {
         Ok(s) => match s.to_str() {
             Some(s) => s.to_string(),
@@ -80,7 +82,14 @@ async fn main() {
 
     let sharedinfo = Arc::new(SharedInfo::new_with_ebbflow_overrides("127.0.0.1:7070".parse().unwrap(), "s.preview.ebbflow.io".to_string(), roots, hostname).await.unwrap());
 
-    let _runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
+    let runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
+
+    tokio::spawn(async move {
+        loop {
+            info!("Status\n{:#?}", runner.status().await);
+            tokio::time::delay_for(Duration::from_millis(3_000)).await;
+        }
+    });
 
     futures::future::pending::<()>().await;
 }

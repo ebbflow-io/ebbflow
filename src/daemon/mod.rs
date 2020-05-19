@@ -2,7 +2,7 @@ pub mod connection;
 
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
 use crate::dns::DnsResolver;
-use crate::signal::SignalReceiver;
+use crate::signal::{SignalSender, SignalReceiver};
 use futures::future::select;
 use futures::future::Either;
 use parking_lot::Mutex;
@@ -117,30 +117,78 @@ pub struct EndpointArgs {
     pub local_addr: SocketAddrV4,
 }
 
+pub struct EndpointMeta {
+    idle: AtomicUsize,
+    active: AtomicUsize,
+    stopper: SignalSender,
+}
+
+impl EndpointMeta {
+    pub fn new(stopper: SignalSender) -> Self {
+        Self {
+            idle: AtomicUsize::new(0),
+            active: AtomicUsize::new(0),
+            stopper,
+        }
+    }
+
+    pub fn num_active(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
+    }
+
+    pub fn num_idle(&self) -> usize {
+        self.idle.load(Ordering::SeqCst)
+    }
+
+    pub fn stop(&self) {
+        self.stopper.send_signal();
+    }
+
+    fn add_idle(&self) {
+        self.idle.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn remove_idle(&self) {
+        self.idle.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn add_active(&self) {
+        self.active.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn remove_active(&self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// This runs this endpoint. To stop it, SEND THE SIGNAL
-pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver) {
-    let mut ourreceiver = receiver.clone();
-    let atomic = Arc::new(AtomicUsize::new(0));
-    let c = atomic.clone();
+pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<EndpointMeta> {
+    let sender = SignalSender::new();
+    let receiver = sender.new_receiver();
+    let mut ourreceiver = sender.new_receiver();
+    let meta = Arc::new(EndpointMeta::new(sender));
+    let metac1 = meta.clone();
+    let metac2 = meta.clone();
     let e = args.endpoint.clone();
     tokio::spawn(async move {
         match select(
             Box::pin(async move { ourreceiver.wait().await }),
-            Box::pin(async move { inner_run_endpoint(info, args, receiver, c).await }),
+            Box::pin(async move { inner_run_endpoint(info, args, receiver, metac1).await }),
         )
         .await
         {
             Either::Left(_) => {
-                debug!("Endpoint runner told to stop {}, current {}", e, atomic.load(Ordering::SeqCst));
+                debug!("Endpoint runner told to stop {}, current i{} a{}", e, metac2.num_idle(), metac2.num_active());
                 tokio::time::delay_for(Duration::from_secs(99)).await;
-                debug!("Endpoint runner told to stop {}, much later, current {}", e, atomic.load(Ordering::SeqCst));
+                debug!("Endpoint runner told to stop {}, much later, current i{} a{}", e, metac2.num_idle(), metac2.num_active());
             }
             Either::Right(_) => debug!("Unreachable? inner_run_endpoint finished"),
         }
     });
+    meta
 }
 
-async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver, atomic: Arc<AtomicUsize>) {
+async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver, meta: Arc<EndpointMeta>) {
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = info.roots();
     let idlesem = Arc::new(Semaphore::new(args.idleconns));
@@ -153,7 +201,7 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
 
         // We can never have more than MAX permits out, we must have one to have a connection.
         let maxpermit = maxsemc.acquire_owned().await;
-        trace!("acquired max permit");
+        trace!("acquired max permit i{} a{}", meta.num_idle(), meta.num_active());
         // Once we are OK with our max, we must have an IDLE connection available
         let idlepermit = idlesemc.acquire_owned().await;
         trace!("acquired idle permit");
@@ -165,13 +213,11 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
             "A new connection to ebbflow will be established for endpoint {} (localaddr: {:?})",
             args.endpoint, args.local_addr
         );
-        let c=  atomic.clone();
+        let m = meta.clone();
         trace!("ebbflow addrs {:?} dns {:?}", args.ebbflow_addr, args.ebbflow_dns);
         tokio::spawn(async move {
-            c.fetch_add(1, Ordering::SeqCst);
-            run_connection(receiverc, args, idlepermit).await;
-            debug!("Connection ended");
-            c.fetch_sub(1, Ordering::SeqCst);
+            run_connection(receiverc, args, idlepermit, m.clone()).await;
+            error!("Connection ended i{} a{}", m.num_idle(), m.num_active());
             drop(maxpermit);
         });
     }

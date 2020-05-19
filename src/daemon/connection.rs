@@ -17,6 +17,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use tokio::time::timeout;
 use std::time::Instant;
+use std::sync::Arc;
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -70,8 +71,12 @@ pub async fn run_connection(
     receiver: SignalReceiver,
     args: EndpointConnectionArgs,
     idle_permit: tokio::sync::OwnedSemaphorePermit,
+    meta: Arc<super::EndpointMeta>,
 ) {
-    let (ebbstream, localtcp, now) = match timeout(MAX_IDLE_CONNETION_TIME, establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args)).await {
+    meta.add_idle();
+    let r = timeout(MAX_IDLE_CONNETION_TIME, establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args)).await;
+    meta.remove_idle();
+    let (ebbstream, localtcp, now) = match r {
         Ok(Ok(x)) => {
             trace!("A connection finished gracefully");
             // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
@@ -107,11 +112,15 @@ pub async fn run_connection(
             return;
         }
     };
+    
 
     debug!("Connection handshake complete and a local connection has been established, proxying data");
 
     // We have two connections that are ready to be proxied, lesgo
-    match proxy_data(ebbstream, localtcp, &args, receiver, now).await {
+    meta.add_active();
+    let r = proxy_data(ebbstream, localtcp, &args, receiver, now).await;
+    meta.remove_active();
+    match r {
         Ok(_) => {}
         Err(e) => {
             info!("error from proxy_data {:?}", e);

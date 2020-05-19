@@ -16,6 +16,7 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use std::net::Shutdown;
 
 pub async fn listen_and_process(
     port_for_customers: usize,
@@ -72,43 +73,59 @@ pub async fn listen_and_process(
         let tc = tested_clients.clone();
         loop {
             let (socket, _) = listener.accept().await.unwrap();
-            info!("Got connection on customer server");
-
-            let mut clienttestedstream = tc.lock().pop().unwrap();
-            info!("Found local connection for customer connection");
-
-            // send message
-            let msg = Message::StartTrafficV0;
-            let msgvec = msg.to_wire_message().unwrap();
-            clienttestedstream.write_all(&msgvec[..]).await.unwrap();
-            clienttestedstream.flush().await.unwrap();
-            info!("Wrote message to {:?}", msg);
-
-            // receive message
-            let mut lenbuf: [u8; 4] = [0; 4];
-            clienttestedstream
-                .read_exact(&mut lenbuf[..])
-                .await
-                .unwrap();
-            let len = u32::from_be_bytes(lenbuf);
-
-            let mut msgbuf = vec![0; len as usize];
-            clienttestedstream
-                .read_exact(&mut msgbuf[..])
-                .await
-                .unwrap();
-
-            let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
-            if let Message::StartTrafficResponseV0(_inner) = msg {
-                info!("Got message from daemon {:?}", msg);
-            } else {
-                panic!("asdfas");
-            }
-
-            tokio::spawn(copyezcopy(clienttestedstream, socket));
+            let x = tc.clone();
+            tokio::spawn(async move {
+                let r = handleconn(socket, x).await;
+                info!("Connection finished, result {:?}", r);
+            });
         }
     });
     futures::future::pending::<()>().await;
+    Ok(())
+}
+
+async fn handleconn(socket: TcpStream, tc: Arc<Mutex<Vec<TlsStream<TcpStream>>>>) -> Result<(), std::io::Error> {
+    info!("Got connection on customer server");
+
+    let mut clienttestedstream = match tc.lock().pop() {
+        Some(x) => x,
+        None => {
+            info!("Did NOT find server for customer, disconnecting customer");
+            // No server, disconnect client
+            let _ = socket.shutdown(Shutdown::Both);
+            return Ok(());
+        }
+    };
+    info!("Found local connection for customer connection");
+
+    // send message
+    let msg = Message::StartTrafficV0;
+    let msgvec = msg.to_wire_message().unwrap();
+    clienttestedstream.write_all(&msgvec[..]).await?;
+    clienttestedstream.flush().await?;
+    info!("Wrote message to {:?}", msg);
+
+    // receive message
+    let mut lenbuf: [u8; 4] = [0; 4];
+    clienttestedstream
+        .read_exact(&mut lenbuf[..])
+        .await?;
+    let len = u32::from_be_bytes(lenbuf);
+
+    let mut msgbuf = vec![0; len as usize];
+    clienttestedstream
+        .read_exact(&mut msgbuf[..])
+        .await?;
+
+    let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
+    if let Message::StartTrafficResponseV0(_inner) = msg {
+        info!("Got message from daemon {:?}", msg);
+    } else {
+        panic!("asdfas");
+    }
+
+    tokio::spawn(copyezcopy(clienttestedstream, socket));
+
     Ok(())
 }
 

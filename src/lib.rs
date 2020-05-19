@@ -4,7 +4,6 @@ extern crate log;
 use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
-use crate::signal::SignalSender;
 use futures::future::BoxFuture;
 use rustls::RootCertStore;
 use std::collections::hash_map::Entry;
@@ -15,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{pin::Pin, net::Ipv4Addr};
 use tokio::sync::Mutex;
-use tokio::sync::watch::Receiver;
 use tokio::sync::Notify;
+use crate::daemon::EndpointMeta;
 
 /// Path to the Config file, see EbbflowDaemonConfig in the config module.
 pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
@@ -34,25 +33,51 @@ pub mod dns;
 pub mod messaging;
 pub mod signal;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DaemonStatusMeta {
     Uninitialized,
     Good,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct DaemonStatus {
     pub meta: DaemonStatusMeta,
+    pub endpoints: Vec<(String, DaemonEndpointStatus)>,
+    pub ssh: DaemonEndpointStatus,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DaemonEndpointStatus {
+    Disabled,
+    Enabled {
+        active: usize,
+        idle: usize,
+    }
+}
+
+impl DaemonEndpointStatus {
+    fn from_ref(ed: &EnabledDisabled) -> Self {
+        match ed {
+            EnabledDisabled::Disabled => DaemonEndpointStatus::Disabled,
+            EnabledDisabled::Enabled(meta) => DaemonEndpointStatus::Enabled {
+                active: meta.num_active(),
+                idle: meta.num_idle(),
+            }
+        }
+    }
+}
+
+/// terribly named but its getting tough to think of words
 enum EnabledDisabled {
-    Enabled(SignalSender),
+    Enabled(Arc<EndpointMeta>),
     Disabled,
 }
 
 impl EnabledDisabled {
     pub fn stop(&mut self) {
-        if let EnabledDisabled::Enabled(sender) = self {
+        if let EnabledDisabled::Enabled(meta) = self {
             debug!("Sending signal to stop");
-            sender.send_signal();
+            meta.stop();
         }
         *self = EnabledDisabled::Disabled;
     }
@@ -95,7 +120,7 @@ impl DaemonRunner {
 
     pub async fn update_config(&self, config: EbbflowDaemonConfig) {
         let mut inner = self.inner.lock().await;
-        inner.update_config(config)
+        inner.update_config(config).await;
     }
 
     pub async fn update_roots(&self, roots: RootCertStore) {
@@ -111,7 +136,7 @@ impl DaemonRunner {
 
 struct InnerDaemonRunner {
     endpoints: HashMap<String, EndpointInstance>,
-    /// port max hostname
+    statusmeta: DaemonStatusMeta,
     ssh: SshInstance,
     info: Arc<SharedInfo>,
 }
@@ -125,11 +150,12 @@ impl InnerDaemonRunner {
                 enabledisable: EnabledDisabled::Disabled,
                 existing_config: defaultsshconfig(info.hostname()),
             },
+            statusmeta: DaemonStatusMeta::Uninitialized,
             info,
         }
     }
 
-    pub fn update_config(&mut self, mut config: EbbflowDaemonConfig) {
+    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig) {
         self.info.update_key(config.key);
 
         // We do this so we can later info.key().unwrap().
@@ -137,6 +163,7 @@ impl InnerDaemonRunner {
             error!("ERROR: Unreachable state where we do not have a key to use, but do have an otherwise valid configuration");
             return;
         }
+        self.statusmeta = DaemonStatusMeta::Good;
 
         let mut set = HashSet::with_capacity(config.endpoints.len());
         info!("Config updating, {} endpoints", config.endpoints.len());
@@ -178,8 +205,8 @@ impl InnerDaemonRunner {
                             // Stop the existing one (may not be running anways)
                             current_instance.enabledisable.stop();
                             // Create a new one
-                            let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
-                            EnabledDisabled::Enabled(sender)
+                            let meta = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
+                            EnabledDisabled::Enabled(meta)
                         } else {
                             debug!("New configuration is DISABLED, stopping existing one and setting new one to enabled");
                             // stop the current one. If it wasn't running anways, then this is still OK.
@@ -197,7 +224,7 @@ impl InnerDaemonRunner {
                 }
                 Entry::Vacant(ve) => {
                     debug!("Configuration for an endpoint that did NOT previously exist found, will create it {}", endpoint.dns);
-                    let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
+                    let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
                     ve.insert(EndpointInstance {
                         enabledisable: EnabledDisabled::Enabled(sender),
                         existing_config: endpoint,
@@ -236,8 +263,8 @@ impl InnerDaemonRunner {
                     local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
                 };
 
-                let sender = spawn_endpoint_with_args(args, self.info.clone());
-                self.ssh.enabledisable = EnabledDisabled::Enabled(sender);
+                let meta = spawn_endpoint_with_args(args, self.info.clone()).await;
+                self.ssh.enabledisable = EnabledDisabled::Enabled(meta);
             }
         }
 
@@ -250,7 +277,15 @@ impl InnerDaemonRunner {
     }
 
     pub fn status(&self) -> DaemonStatus {
-        todo!()
+        let ssh = DaemonEndpointStatus::from_ref(&self.ssh.enabledisable);
+        
+        let e = self.endpoints.iter().map(|(s, e)| (s.clone(), DaemonEndpointStatus::from_ref(&e.enabledisable))).collect();
+
+        DaemonStatus {
+            meta: self.statusmeta,
+            endpoints: e,
+            ssh,
+        }
     }
 }
 
@@ -263,7 +298,7 @@ fn defaultsshconfig(hostname: String) -> SshConfiguration {
     }
 }
 
-pub fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) -> SignalSender {
+pub async fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) -> Arc<EndpointMeta> {
     let address = e
         .address_override
         .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -283,18 +318,11 @@ pub fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) 
         local_addr: SocketAddrV4::new(ip, port),
     };
 
-    spawn_endpoint_with_args(args, info)
+    spawn_endpoint_with_args(args, info).await
 }
 
-pub fn spawn_endpoint_with_args(args: EndpointArgs, info: Arc<SharedInfo>) -> SignalSender {
-    let sender = SignalSender::new();
-    let receiver = sender.new_receiver();
-
-    tokio::spawn(async move {
-        let _ = spawn_endpoint(info, args, receiver).await;
-    });
-
-    sender
+pub async fn spawn_endpoint_with_args(args: EndpointArgs, info: Arc<SharedInfo>) -> Arc<EndpointMeta> {
+    spawn_endpoint(info, args).await
 }
 
 pub async fn run_daemon<ROOTR>(
