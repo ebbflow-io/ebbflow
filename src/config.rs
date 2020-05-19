@@ -45,7 +45,7 @@ impl EbbflowDaemonConfig {
         let parsed: EbbflowDaemonConfig = match serde_yaml::from_slice(&filebytes[..]) {
             Ok(p) => p,
             Err(_e) => {
-                warn!("Error parsing configuration file");
+                info!("Error parsing configuration file");
                 return Err(ConfigError::Parsing);
             }
         };
@@ -71,7 +71,7 @@ impl EbbflowDaemonConfig {
         let b: String = match serde_yaml::to_string(self) {
             Ok(s) => s,
             Err(_e) => {
-                warn!("Error parsing current configuration into a YAML file");
+                info!("Error parsing current configuration into a YAML file");
                 return Err(ConfigError::Parsing);
             }
         };

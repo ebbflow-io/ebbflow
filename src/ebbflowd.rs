@@ -86,8 +86,8 @@ async fn main() {
 
     tokio::spawn(async move {
         loop {
+            tokio::time::delay_for(Duration::from_secs(60 * 5)).await;
             info!("Status\n{:#?}", runner.status().await);
-            tokio::time::delay_for(Duration::from_millis(3_000)).await;
         }
     });
 

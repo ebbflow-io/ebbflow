@@ -170,6 +170,9 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<En
     let metac1 = meta.clone();
     let metac2 = meta.clone();
     let e = args.endpoint.clone();
+
+    const POST_CANCEL_DELAY: Duration = Duration::from_secs(3);
+
     tokio::spawn(async move {
         match select(
             Box::pin(async move { ourreceiver.wait().await }),
@@ -178,11 +181,10 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<En
         .await
         {
             Either::Left(_) => {
-                debug!("Endpoint runner told to stop {}, current i{} a{}", e, metac2.num_idle(), metac2.num_active());
-                tokio::time::delay_for(Duration::from_secs(99)).await;
-                debug!("Endpoint runner told to stop {}, much later, current i{} a{}", e, metac2.num_idle(), metac2.num_active());
+                tokio::time::delay_for(POST_CANCEL_DELAY).await;
+                debug!("Endpoint runner told to stop {}, {:?} later current i{} a{}", e, POST_CANCEL_DELAY, metac2.num_idle(), metac2.num_active());
             }
-            Either::Right(_) => debug!("Unreachable? inner_run_endpoint finished"),
+            Either::Right(_) => info!("Unreachable? inner_run_endpoint finished"),
         }
     });
     meta

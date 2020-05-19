@@ -91,13 +91,13 @@ pub async fn run_connection(
                         "A connection for endpoint {} failed due to {:?}",
                         args.endpoint, e
                     );
-                    info!("Bad error delay");
+                    trace!("Bad error delay");
                     jittersleep1p5(BAD_ERROR_DELAY).await;
                     // We should sleep to avoid spamming, as NotFound and Forbidden errors
                     // are unlikely to be resolved anytime soon.
                 }
                 _ => {
-                    info!(
+                    debug!(
                         "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
                         args.endpoint, e
                     );
@@ -108,13 +108,11 @@ pub async fn run_connection(
             return;
         }
         Err(_e) => {
-            debug!("A connection was idle for {:?} so it was terminated and we will retry", MAX_IDLE_CONNETION_TIME);
+            trace!("A connection was idle for {:?} so it was terminated and we will retry", MAX_IDLE_CONNETION_TIME);
             return;
         }
     };
-    
-
-    debug!("Connection handshake complete and a local connection has been established, proxying data");
+    trace!("Connection handshake complete and a local connection has been established, proxying data");
 
     // We have two connections that are ready to be proxied, lesgo
     meta.add_active();
@@ -123,7 +121,7 @@ pub async fn run_connection(
     match r {
         Ok(_) => {}
         Err(e) => {
-            info!("error from proxy_data {:?}", e);
+            debug!("error from proxy_data {:?}", e);
         }
     }
 }
@@ -140,7 +138,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
 
     let receiverfut = Box::pin(async move {
         receiver.wait().await;
-        debug!("Receiver told to stop");
+        trace!("Receiver told to stop");
     });
 
     // Say Hello
@@ -173,7 +171,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
     .await
     {
         Either::Left((_, readf)) => {
-            debug!("Stopping connection await due to signal stop");
+            trace!("Stopping connection await due to signal stop");
             drop(readf);
             return Err(ConnectionError::Shutdown);
         }
@@ -194,7 +192,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
             localstream
         }
         Err(e) => {
-            warn!(
+            info!(
                 "Error connecting to local address {:?} for endpoint {} {:?}",
                 args.local_addr, args.endpoint, e
             );
@@ -203,7 +201,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
             return Err(e);
         }
     };
-    warn!("Traffic notification until connected locally {:?}", now.elapsed());
+    trace!("Traffic notification until connected locally {:?}", now.elapsed());
 
     Ok((stream, local, now))
 }
@@ -345,7 +343,7 @@ where
     loop {
         let n = r.read(&mut buf[0..]).await?;
         if first {
-            warn!("First bytes read elapsed {:?}", start.elapsed());
+            trace!("First bytes read elapsed {:?}", start.elapsed());
             first = false;
         }
 

@@ -166,9 +166,9 @@ impl InnerDaemonRunner {
         self.statusmeta = DaemonStatusMeta::Good;
 
         let mut set = HashSet::with_capacity(config.endpoints.len());
-        info!("Config updating, {} endpoints", config.endpoints.len());
+        trace!("Config updating, {} endpoints", config.endpoints.len());
         for e in config.endpoints.iter() {
-            debug!("endpoint {} enabled {}", e.dns, e.enabled);
+            debug!("reading config endpoint {} enabled {}", e.dns, e.enabled);
             set.insert(e.dns.clone());
         }
 
@@ -248,8 +248,8 @@ impl InnerDaemonRunner {
 
         // If something changed, we know we will stop the existing one
         if newconfig != self.ssh.existing_config {
-            debug!("Old config\n{:#?}", self.ssh.existing_config);
-            debug!("New config\n{:#?}", newconfig);
+            trace!("Old config\n{:#?}", self.ssh.existing_config);
+            trace!("New config\n{:#?}", newconfig);
             self.ssh.enabledisable.stop();
         
             //We have a different config, and its new, lets start the new one.
@@ -263,7 +263,7 @@ impl InnerDaemonRunner {
                     local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
                 };
 
-                let meta = spawn_endpoint_with_args(args, self.info.clone()).await;
+                let meta = spawn_endpoint(self.info.clone(), args).await;
                 self.ssh.enabledisable = EnabledDisabled::Enabled(meta);
             }
         }
@@ -318,10 +318,6 @@ pub async fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedI
         local_addr: SocketAddrV4::new(ip, port),
     };
 
-    spawn_endpoint_with_args(args, info).await
-}
-
-pub async fn spawn_endpoint_with_args(args: EndpointArgs, info: Arc<SharedInfo>) -> Arc<EndpointMeta> {
     spawn_endpoint(info, args).await
 }
 
