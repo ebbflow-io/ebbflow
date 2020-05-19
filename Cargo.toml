@@ -53,6 +53,7 @@ A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
 priority = "optional"
 section = "net"
 depends = "$auto"
+conf-files = ["/etc/ebbflow/config.yaml"]
 maintainer-scripts="assets/debian"
 assets = [
     ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],

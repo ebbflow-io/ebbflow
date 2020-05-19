@@ -316,7 +316,7 @@ mod basic_tests_v0 {
                 maxconns: 1,
                 port: sshp,
                 hostname_override: Some(hn),
-            }), // We need to override the SSH port or else it will hit the actual ssh server the host
+            }),
         };
 
         tokio::spawn(listen_and_process(customerport, testclientport));
