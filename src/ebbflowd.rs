@@ -78,7 +78,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let sharedinfo = Arc::new(SharedInfo::new_with_ebbflow_overrides("127.0.0.1:7070".parse().unwrap(), roots, hostname).await.unwrap());
+    let sharedinfo = Arc::new(SharedInfo::new_with_ebbflow_overrides("127.0.0.1:7070".parse().unwrap(), "s.preview.ebbflow.io".to_string(), roots, hostname).await.unwrap());
 
     let _runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
 

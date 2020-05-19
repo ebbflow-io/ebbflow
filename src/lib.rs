@@ -51,6 +51,7 @@ enum EnabledDisabled {
 impl EnabledDisabled {
     pub fn stop(&mut self) {
         if let EnabledDisabled::Enabled(sender) = self {
+            debug!("Sending signal to stop");
             sender.send_signal();
         }
         *self = EnabledDisabled::Disabled;
@@ -67,11 +68,12 @@ struct SshInstance {
     enabledisable: EnabledDisabled,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 struct SshConfiguration {
     port: u16,
     max: usize,
     hostname: String,
+    enabled: bool,
 }
 
 pub enum EnableDisableTarget {
@@ -110,7 +112,7 @@ impl DaemonRunner {
 struct InnerDaemonRunner {
     endpoints: HashMap<String, EndpointInstance>,
     /// port max hostname
-    ssh: Option<SshInstance>,
+    ssh: SshInstance,
     info: Arc<SharedInfo>,
 }
 
@@ -118,9 +120,12 @@ struct InnerDaemonRunner {
 impl InnerDaemonRunner {
     pub fn new(info: Arc<SharedInfo>) -> Self {
         Self {
-            info,
             endpoints: HashMap::new(),
-            ssh: None,
+            ssh: SshInstance {
+                enabledisable: EnabledDisabled::Disabled,
+                existing_config: defaultsshconfig(info.hostname()),
+            },
+            info,
         }
     }
 
@@ -136,6 +141,7 @@ impl InnerDaemonRunner {
         let mut set = HashSet::with_capacity(config.endpoints.len());
         info!("Config updating, {} endpoints", config.endpoints.len());
         for e in config.endpoints.iter() {
+            debug!("endpoint {} enabled {}", e.dns, e.enabled);
             set.insert(e.dns.clone());
         }
 
@@ -168,12 +174,14 @@ impl InnerDaemonRunner {
                         debug!("Configuration for an endpoint CHANGED, will stop existing and start new one {}", endpoint.dns);
                         
                         let newenabledisable = if endpoint.enabled {
+                            debug!("New configuration is enabled, stopping existing one and setting new one to enabled");
                             // Stop the existing one (may not be running anways)
                             current_instance.enabledisable.stop();
                             // Create a new one
                             let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone());
                             EnabledDisabled::Enabled(sender)
                         } else {
+                            debug!("New configuration is DISABLED, stopping existing one and setting new one to enabled");
                             // stop the current one. If it wasn't running anways, then this is still OK.
                             current_instance.enabledisable.stop();
                             // we weren't running, so just return disabled
@@ -198,28 +206,27 @@ impl InnerDaemonRunner {
             }
         }
 
-        if config.enable_ssh {
-            let port = config.ssh.as_ref().map(|sshcfg| sshcfg.port).unwrap_or(22);
-            let max: usize = config.ssh.as_ref().map(|sshcfg| sshcfg.maxconns as usize).unwrap_or(30);
-            let hostname: Option<String> = config.ssh.as_ref().map(|sshcfg| sshcfg.hostname_override.clone()).flatten();
-            let hostname = hostname.unwrap_or_else(|| self.info.hostname());
+        // SSH Related
+        let port = config.ssh.as_ref().map(|sshcfg| sshcfg.port).unwrap_or(22);
+        let max: usize = config.ssh.as_ref().map(|sshcfg| sshcfg.maxconns as usize).unwrap_or(30);
+        let hostname: Option<String> = config.ssh.as_ref().map(|sshcfg| sshcfg.hostname_override.clone()).flatten();
+        let hostname = hostname.unwrap_or_else(|| self.info.hostname());
 
-            let newconfig = SshConfiguration {
-                port,
-                max,
-                hostname,
-            };
+        let newconfig = SshConfiguration {
+            port,
+            max,
+            hostname,
+            enabled: config.enable_ssh,
+        };
 
-            if if let Some(ref mut sshinstance) = &mut self.ssh {
-                if &sshinstance.existing_config != &newconfig {
-                    sshinstance.enabledisable.stop();
-                    true
-                } else {
-                    false
-                }
-            } else {
-                self.ssh.is_none()
-            } {
+        // If something changed, we know we will stop the existing one
+        if newconfig != self.ssh.existing_config {
+            debug!("Old config\n{:#?}", self.ssh.existing_config);
+            debug!("New config\n{:#?}", newconfig);
+            self.ssh.enabledisable.stop();
+        
+            //We have a different config, and its new, lets start the new one.
+            if newconfig.enabled {
                 // start the new one and set it
                 let args = EndpointArgs {
                     ctype: EndpointConnectionType::Ssh,
@@ -230,17 +237,12 @@ impl InnerDaemonRunner {
                 };
 
                 let sender = spawn_endpoint_with_args(args, self.info.clone());
-                self.ssh = Some(SshInstance {
-                    existing_config: newconfig,
-                    enabledisable: EnabledDisabled::Enabled(sender),
-                });
-            }
-        } else {
-            // maybe they disabled it, let's turn it off.
-            if let Some(ref mut instance) = &mut self.ssh {
-                instance.enabledisable.stop();
+                self.ssh.enabledisable = EnabledDisabled::Enabled(sender);
             }
         }
+
+        // Either its new, and we want to set it to the new one, or its the same, and this is OK.
+        self.ssh.existing_config = newconfig;
     }
 
     pub fn update_roots(&self, roots: RootCertStore) {
@@ -249,6 +251,15 @@ impl InnerDaemonRunner {
 
     pub fn status(&self) -> DaemonStatus {
         todo!()
+    }
+}
+
+fn defaultsshconfig(hostname: String) -> SshConfiguration {
+    SshConfiguration {
+        hostname,
+        port: 22,
+        max: 20,
+        enabled: false,
     }
 }
 

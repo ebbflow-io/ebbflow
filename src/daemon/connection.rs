@@ -131,6 +131,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
 
     let receiverfut = Box::pin(async move {
         receiver.wait().await;
+        debug!("Receiver told to stop");
     });
 
     // Say Hello
@@ -163,6 +164,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
     .await
     {
         Either::Left((_, readf)) => {
+            debug!("Stopping connection await due to signal stop");
             drop(readf);
             return Err(ConnectionError::Shutdown);
         }
@@ -257,7 +259,7 @@ async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, 
     tlsstream.read_exact(&mut lenbuf[..]).await?;
     let len = u32::from_be_bytes(lenbuf) as usize;
 
-    if len > 50 * 1024 {
+    if len > 200 * 1024 {
         return Err(ConnectionError::Messaging(MessageError::Internal(
             "message too big safeguard",
         )));

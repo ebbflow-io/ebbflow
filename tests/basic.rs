@@ -16,7 +16,6 @@ mod basic_tests_v0 {
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
     use tokio::prelude::*;
-    use tokio::sync::watch::{channel, Sender, Receiver};
     use tokio::sync::Notify;
 
     const MOCKEBBSPAWNDELAY: Duration = Duration::from_millis(100);
@@ -47,7 +46,6 @@ mod basic_tests_v0 {
         let mut server = serverconnhandle.await.unwrap().unwrap();
 
         // at this point, we have the customer conn and server conn, let's send some bytes.
-
         let writeme: [u8; 102] = [1; 102];
         customer.write_all(&writeme[..]).await.unwrap();
         info!("Wrote Customer Stuff");
@@ -145,13 +143,12 @@ mod basic_tests_v0 {
     async fn start_basic_daemon(ebbport: usize, serverport: usize) {
         let info = SharedInfo::new_with_ebbflow_overrides(
             format!("127.0.0.1:{}", ebbport).parse().unwrap(),
+            "preview.ebbflow.io".to_string(),
             load_root(),
             "hostname".to_string(),
         )
         .await
         .unwrap();
-
-        // info.update_key("asdfasdf".to_string());
         
         tokio::spawn(async move {
             run_daemon( Arc::new(info), config_reload_maker(serverport), dummyroot, Arc::new(Notify::new())).await;

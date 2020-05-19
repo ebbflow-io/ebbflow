@@ -13,7 +13,9 @@ use rustls::{ClientConfig, RootCertStore};
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_rustls::TlsConnector;
+use std::time::Duration;
 
 const EBBFLOW_DNS: &str = "s.preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
 const EBBFLOW_PORT: u16 = 7070;
@@ -23,24 +25,27 @@ pub struct SharedInfo {
     key: Mutex<Option<String>>,
     roots: Mutex<RootCertStore>,
     hardcoded_ebbflow_addr: Option<SocketAddrV4>,
+    hardcoded_ebbflow_dns: Option<String>,
     hostname: String,
 }
 
 impl SharedInfo {
     pub async fn new(roots: RootCertStore, hostname: String) -> Result<Self, ()> {
-        Self::innernew(None, roots, hostname).await
+        Self::innernew(None, None, roots, hostname).await
     }
 
     pub async fn new_with_ebbflow_overrides(
         hardcoded_ebbflow_addr: SocketAddrV4,
+        hardcoded_ebbflow_dns: String,
         roots: RootCertStore,
         hostname: String,
     ) -> Result<Self, ()> {
-        Self::innernew(Some(hardcoded_ebbflow_addr), roots, hostname).await
+        Self::innernew(Some(hardcoded_ebbflow_addr), Some(hardcoded_ebbflow_dns), roots, hostname).await
     }
 
     async fn innernew(
         overriddenmaybe: Option<SocketAddrV4>,
+        overridedns: Option<String>,
         roots: RootCertStore,
         hostname: String,
     ) -> Result<Self, ()> {
@@ -49,6 +54,7 @@ impl SharedInfo {
             key: Mutex::new(None),
             roots: Mutex::new(roots),
             hardcoded_ebbflow_addr: overriddenmaybe,
+            hardcoded_ebbflow_dns: overridedns,
             hostname,
         })
     }
@@ -92,9 +98,13 @@ impl SharedInfo {
     }
 
     pub fn ebbflow_dns(&self) -> webpki::DNSName {
-        webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS)
-            .unwrap()
-            .to_owned()
+        if let Some(overridden) = &self.hardcoded_ebbflow_dns {
+            webpki::DNSNameRef::try_from_ascii_str(&overridden).unwrap().to_owned()
+        } else {
+            webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS)
+                .unwrap()
+                .to_owned()
+        }
     }
 }
 
@@ -110,20 +120,27 @@ pub struct EndpointArgs {
 /// This runs this endpoint. To stop it, SEND THE SIGNAL
 pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver) {
     let mut ourreceiver = receiver.clone();
+    let atomic = Arc::new(AtomicUsize::new(0));
+    let c = atomic.clone();
+    let e = args.endpoint.clone();
     tokio::spawn(async move {
         match select(
             Box::pin(async move { ourreceiver.wait().await }),
-            Box::pin(async move { inner_run_endpoint(info, args, receiver).await }),
+            Box::pin(async move { inner_run_endpoint(info, args, receiver, c).await }),
         )
         .await
         {
-            Either::Left(_) => debug!("Endpoint runner told to stop"),
+            Either::Left(_) => {
+                debug!("Endpoint runner told to stop {}, current {}", e, atomic.load(Ordering::SeqCst));
+                tokio::time::delay_for(Duration::from_secs(99)).await;
+                debug!("Endpoint runner told to stop {}, much later, current {}", e, atomic.load(Ordering::SeqCst));
+            }
             Either::Right(_) => debug!("Unreachable? inner_run_endpoint finished"),
         }
     });
 }
 
-async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver) {
+async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver, atomic: Arc<AtomicUsize>) {
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = info.roots();
     let idlesem = Arc::new(Semaphore::new(args.idleconns));
@@ -148,9 +165,13 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
             "A new connection to ebbflow will be established for endpoint {} (localaddr: {:?})",
             args.endpoint, args.local_addr
         );
+        let c=  atomic.clone();
         trace!("ebbflow addrs {:?} dns {:?}", args.ebbflow_addr, args.ebbflow_dns);
         tokio::spawn(async move {
+            c.fetch_add(1, Ordering::SeqCst);
             run_connection(receiverc, args, idlepermit).await;
+            debug!("Connection ended");
+            c.fetch_sub(1, Ordering::SeqCst);
             drop(maxpermit);
         });
     }
