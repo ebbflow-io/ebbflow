@@ -3,6 +3,7 @@ extern crate log;
 
 use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
+use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
 use futures::future::BoxFuture;
 use rustls::RootCertStore;
@@ -12,10 +13,9 @@ use std::collections::HashSet;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{pin::Pin, net::Ipv4Addr};
+use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
-use crate::daemon::EndpointMeta;
 
 /// Path to the Config file, see EbbflowDaemonConfig in the config module.
 pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
@@ -49,10 +49,7 @@ pub struct DaemonStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DaemonEndpointStatus {
     Disabled,
-    Enabled {
-        active: usize,
-        idle: usize,
-    }
+    Enabled { active: usize, idle: usize },
 }
 
 impl DaemonEndpointStatus {
@@ -62,7 +59,7 @@ impl DaemonEndpointStatus {
             EnabledDisabled::Enabled(meta) => DaemonEndpointStatus::Enabled {
                 active: meta.num_active(),
                 idle: meta.num_idle(),
-            }
+            },
         }
     }
 }
@@ -141,7 +138,6 @@ struct InnerDaemonRunner {
     info: Arc<SharedInfo>,
 }
 
-
 impl InnerDaemonRunner {
     pub fn new(info: Arc<SharedInfo>) -> Self {
         Self {
@@ -199,13 +195,14 @@ impl InnerDaemonRunner {
                     // do nothing!!s
                     } else {
                         debug!("Configuration for an endpoint CHANGED, will stop existing and start new one {}", endpoint.dns);
-                        
+
                         let newenabledisable = if endpoint.enabled {
                             debug!("New configuration is enabled, stopping existing one and setting new one to enabled");
                             // Stop the existing one (may not be running anways)
                             current_instance.enabledisable.stop();
                             // Create a new one
-                            let meta = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
+                            let meta =
+                                spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
                             EnabledDisabled::Enabled(meta)
                         } else {
                             debug!("New configuration is DISABLED, stopping existing one and setting new one to enabled");
@@ -214,7 +211,7 @@ impl InnerDaemonRunner {
                             // we weren't running, so just return disabled
                             EnabledDisabled::Disabled
                         };
-                        
+
                         // Insert this new config
                         oe.insert(EndpointInstance {
                             enabledisable: newenabledisable,
@@ -235,8 +232,16 @@ impl InnerDaemonRunner {
 
         // SSH Related
         let port = config.ssh.as_ref().map(|sshcfg| sshcfg.port).unwrap_or(22);
-        let max: usize = config.ssh.as_ref().map(|sshcfg| sshcfg.maxconns as usize).unwrap_or(30);
-        let hostname: Option<String> = config.ssh.as_ref().map(|sshcfg| sshcfg.hostname_override.clone()).flatten();
+        let max: usize = config
+            .ssh
+            .as_ref()
+            .map(|sshcfg| sshcfg.maxconns as usize)
+            .unwrap_or(30);
+        let hostname: Option<String> = config
+            .ssh
+            .as_ref()
+            .map(|sshcfg| sshcfg.hostname_override.clone())
+            .flatten();
         let hostname = hostname.unwrap_or_else(|| self.info.hostname());
 
         let newconfig = SshConfiguration {
@@ -251,7 +256,7 @@ impl InnerDaemonRunner {
             trace!("Old config\n{:#?}", self.ssh.existing_config);
             trace!("New config\n{:#?}", newconfig);
             self.ssh.enabledisable.stop();
-        
+
             //We have a different config, and its new, lets start the new one.
             if newconfig.enabled {
                 // start the new one and set it
@@ -278,8 +283,12 @@ impl InnerDaemonRunner {
 
     pub fn status(&self) -> DaemonStatus {
         let ssh = DaemonEndpointStatus::from_ref(&self.ssh.enabledisable);
-        
-        let e = self.endpoints.iter().map(|(s, e)| (s.clone(), DaemonEndpointStatus::from_ref(&e.enabledisable))).collect();
+
+        let e = self
+            .endpoints
+            .iter()
+            .map(|(s, e)| (s.clone(), DaemonEndpointStatus::from_ref(&e.enabledisable)))
+            .collect();
 
         DaemonStatus {
             meta: self.statusmeta,
@@ -298,7 +307,10 @@ fn defaultsshconfig(hostname: String) -> SshConfiguration {
     }
 }
 
-pub async fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedInfo>) -> Arc<EndpointMeta> {
+pub async fn spawn_endpointasdfsfa(
+    e: crate::config::Endpoint,
+    info: Arc<SharedInfo>,
+) -> Arc<EndpointMeta> {
     let address = e
         .address_override
         .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -323,7 +335,14 @@ pub async fn spawn_endpointasdfsfa(e: crate::config::Endpoint, info: Arc<SharedI
 
 pub async fn run_daemon<ROOTR>(
     info: Arc<SharedInfo>,
-    cfg_reload: Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> + Send + Sync + 'static>>,
+    cfg_reload: Pin<
+        Box<
+            dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
     root_reload: ROOTR,
     cfg_notifier: Arc<Notify>,
 ) -> Arc<DaemonRunner>
@@ -331,7 +350,7 @@ where
     //CFGR: Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>>>,
     ROOTR: Fn() -> Option<RootCertStore> + Sync + Send + 'static,
 {
-    let runner = Arc::new(DaemonRunner::new(info));    
+    let runner = Arc::new(DaemonRunner::new(info));
     let runnerc = runner.clone();
 
     let cfgrealoadfn = cfg_reload;

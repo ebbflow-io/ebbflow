@@ -1,8 +1,8 @@
+use crate::CONFIG_FILE;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::Error as IoError;
 use tokio::io::ErrorKind;
-use crate::CONFIG_FILE;
 
 #[derive(Debug)]
 pub enum ConfigError {

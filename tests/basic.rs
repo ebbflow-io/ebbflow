@@ -7,8 +7,8 @@ mod basic_tests_v0 {
     use crate::mockebb::listen_and_process;
     use crate::mockebb::load_root;
     use ebbflow::{
-        config::ConfigError, config::EbbflowDaemonConfig, config::Ssh, config::Endpoint, daemon::SharedInfo,
-        run_daemon, DaemonRunner, DaemonEndpointStatus, DaemonStatusMeta,
+        config::ConfigError, config::EbbflowDaemonConfig, config::Endpoint, config::Ssh,
+        daemon::SharedInfo, run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
     };
     use futures::future::BoxFuture;
     use std::sync::Arc;
@@ -16,8 +16,8 @@ mod basic_tests_v0 {
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
     use tokio::prelude::*;
-    use tokio::sync::Notify;
     use tokio::sync::Mutex;
+    use tokio::sync::Notify;
 
     const MOCKEBBSPAWNDELAY: Duration = Duration::from_millis(100);
 
@@ -32,7 +32,8 @@ mod basic_tests_v0 {
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned ebb");
 
-        let (_notify, _arcmutex, _) = start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
+        let (_notify, _arcmutex, _) =
+            start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
@@ -76,7 +77,8 @@ mod basic_tests_v0 {
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned ebb");
 
-        let (_notify, _arcmutex, _) = start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
+        let (_notify, _arcmutex, _) =
+            start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
         info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
@@ -193,7 +195,8 @@ mod basic_tests_v0 {
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned ebb");
 
-        let (notify, arcmutex, _) = start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
+        let (notify, arcmutex, _) =
+            start_basic_daemon(testclientport, ezconfigendpoitnonly(serverport as u16)).await;
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
@@ -247,7 +250,6 @@ mod basic_tests_v0 {
                     } else {
                         r
                     }
-
                 }
                 Err(e) => Err(e),
             }
@@ -302,14 +304,14 @@ mod basic_tests_v0 {
                     address_override: None,
                     enabled: true,
                 },
-                    Endpoint {
+                Endpoint {
                     port: ep1,
                     dns: e1.clone(),
                     maxconns: 1000,
                     idleconns_override: Some(3),
                     address_override: None,
                     enabled: true,
-                }
+                },
             ],
             enable_ssh: true,
             ssh: Some(Ssh {
@@ -330,25 +332,25 @@ mod basic_tests_v0 {
         let status = daemon.status().await;
 
         assert_eq!(DaemonStatusMeta::Good, status.meta);
-        assert_eq!(DaemonEndpointStatus::Enabled {
-            active: 0,
-            idle: 1,
-        }, status.ssh);
+        assert_eq!(
+            DaemonEndpointStatus::Enabled { active: 0, idle: 1 },
+            status.ssh
+        );
 
         assert_eq!(2, status.endpoints.len());
 
         for (endpoint, status) in status.endpoints.iter() {
             println!("e {} s {:?}", endpoint, status);
             if e0 == endpoint.as_str() {
-                assert_eq!(&DaemonEndpointStatus::Enabled {
-                    active: 0,
-                    idle: 2,
-                }, status);
+                assert_eq!(
+                    &DaemonEndpointStatus::Enabled { active: 0, idle: 2 },
+                    status
+                );
             } else if e1 == endpoint.as_str() {
-                assert_eq!(&DaemonEndpointStatus::Enabled {
-                    active: 0,
-                    idle: 3,
-                }, status);
+                assert_eq!(
+                    &DaemonEndpointStatus::Enabled { active: 0, idle: 3 },
+                    status
+                );
             } else {
                 panic!("unexpected")
             }
@@ -365,7 +367,14 @@ mod basic_tests_v0 {
         Ok(socket)
     }
 
-    async fn start_basic_daemon(ebbport: usize, cfg: EbbflowDaemonConfig) -> (Arc<Notify>, Arc<Mutex<EbbflowDaemonConfig>>, Arc<DaemonRunner>) {
+    async fn start_basic_daemon(
+        ebbport: usize,
+        cfg: EbbflowDaemonConfig,
+    ) -> (
+        Arc<Notify>,
+        Arc<Mutex<EbbflowDaemonConfig>>,
+        Arc<DaemonRunner>,
+    ) {
         let info = SharedInfo::new_with_ebbflow_overrides(
             format!("127.0.0.1:{}", ebbport).parse().unwrap(),
             "preview.ebbflow.io".to_string(),
@@ -374,14 +383,14 @@ mod basic_tests_v0 {
         )
         .await
         .unwrap();
-        
+
         let (am, f) = config_with_reloading(cfg);
 
         let nc = Arc::new(Notify::new());
         let n = nc.clone();
-            
-        let m = run_daemon( Arc::new(info), f, dummyroot, n.clone()).await;
-    
+
+        let m = run_daemon(Arc::new(info), f, dummyroot, n.clone()).await;
+
         (nc, am, m)
     }
 
@@ -401,16 +410,29 @@ mod basic_tests_v0 {
         }
     }
 
-    fn config_with_reloading(cfg: EbbflowDaemonConfig) -> (Arc<Mutex<EbbflowDaemonConfig>>, std::pin::Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>  + Send + Sync + 'static>>) {
+    fn config_with_reloading(
+        cfg: EbbflowDaemonConfig,
+    ) -> (
+        Arc<Mutex<EbbflowDaemonConfig>>,
+        std::pin::Pin<
+            Box<
+                dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        >,
+    ) {
         let cfg: Arc<Mutex<EbbflowDaemonConfig>> = Arc::new(Mutex::new(cfg));
-        
+
         let c = cfg.clone();
-        (cfg, Box::pin(move || {
-            let cc = c.clone();
-            Box::pin(async move { 
-                Ok(cc.lock().await.clone())
-            })
-        }))
+        (
+            cfg,
+            Box::pin(move || {
+                let cc = c.clone();
+                Box::pin(async move { Ok(cc.lock().await.clone()) })
+            }),
+        )
     }
 
     fn dummyroot() -> Option<rustls::RootCertStore> {

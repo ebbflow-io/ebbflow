@@ -8,6 +8,7 @@ use rustls::{Certificate, PrivateKey};
 use std::fs;
 use std::io;
 use std::io::BufReader;
+use std::net::Shutdown;
 use std::sync::Arc;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
@@ -16,7 +17,6 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
-use std::net::Shutdown;
 
 pub async fn listen_and_process(
     port_for_customers: usize,
@@ -84,7 +84,10 @@ pub async fn listen_and_process(
     Ok(())
 }
 
-async fn handleconn(socket: TcpStream, tc: Arc<Mutex<Vec<TlsStream<TcpStream>>>>) -> Result<(), std::io::Error> {
+async fn handleconn(
+    socket: TcpStream,
+    tc: Arc<Mutex<Vec<TlsStream<TcpStream>>>>,
+) -> Result<(), std::io::Error> {
     info!("Got connection on customer server");
 
     let mut clienttestedstream = match tc.lock().pop() {
@@ -107,15 +110,11 @@ async fn handleconn(socket: TcpStream, tc: Arc<Mutex<Vec<TlsStream<TcpStream>>>>
 
     // receive message
     let mut lenbuf: [u8; 4] = [0; 4];
-    clienttestedstream
-        .read_exact(&mut lenbuf[..])
-        .await?;
+    clienttestedstream.read_exact(&mut lenbuf[..]).await?;
     let len = u32::from_be_bytes(lenbuf);
 
     let mut msgbuf = vec![0; len as usize];
-    clienttestedstream
-        .read_exact(&mut msgbuf[..])
-        .await?;
+    clienttestedstream.read_exact(&mut msgbuf[..]).await?;
 
     let msg = Message::from_wire_without_the_length_prefix(&msgbuf[..]).unwrap();
     if let Message::StartTrafficResponseV0(_inner) = msg {

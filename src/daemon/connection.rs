@@ -3,21 +3,21 @@ use crate::messaging::{
 };
 use crate::signal::SignalReceiver;
 use futures::future::{Either, Future};
+use rand::rngs::SmallRng;
+use rand::Rng;
+use rand::SeedableRng;
 use std::io::Error as IoError;
 use std::net::SocketAddrV4;
+use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::time::timeout as tokiotimeout;
+use tokio::time::timeout;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
-use rand::rngs::SmallRng;
-use rand::Rng;
-use rand::SeedableRng;
-use tokio::time::timeout;
-use std::time::Instant;
-use std::sync::Arc;
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -74,7 +74,11 @@ pub async fn run_connection(
     meta: Arc<super::EndpointMeta>,
 ) {
     meta.add_idle();
-    let r = timeout(MAX_IDLE_CONNETION_TIME, establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args)).await;
+    let r = timeout(
+        MAX_IDLE_CONNETION_TIME,
+        establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args),
+    )
+    .await;
     meta.remove_idle();
     let (ebbstream, localtcp, now) = match r {
         Ok(Ok(x)) => {
@@ -86,7 +90,9 @@ pub async fn run_connection(
         }
         Ok(Err(e)) => {
             match e {
-                ConnectionError::Forbidden | ConnectionError::NotFound | ConnectionError::BadRequest => {
+                ConnectionError::Forbidden
+                | ConnectionError::NotFound
+                | ConnectionError::BadRequest => {
                     warn!(
                         "A connection for endpoint {} failed due to {:?}",
                         args.endpoint, e
@@ -108,11 +114,16 @@ pub async fn run_connection(
             return;
         }
         Err(_e) => {
-            trace!("A connection was idle for {:?} so it was terminated and we will retry", MAX_IDLE_CONNETION_TIME);
+            trace!(
+                "A connection was idle for {:?} so it was terminated and we will retry",
+                MAX_IDLE_CONNETION_TIME
+            );
             return;
         }
     };
-    trace!("Connection handshake complete and a local connection has been established, proxying data");
+    trace!(
+        "Connection handshake complete and a local connection has been established, proxying data"
+    );
 
     // We have two connections that are ready to be proxied, lesgo
     meta.add_active();
@@ -201,7 +212,10 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
             return Err(e);
         }
     };
-    trace!("Traffic notification until connected locally {:?}", now.elapsed());
+    trace!(
+        "Traffic notification until connected locally {:?}",
+        now.elapsed()
+    );
 
     Ok((stream, local, now))
 }
@@ -214,10 +228,9 @@ async fn proxy_data(
     start: Instant,
 ) -> Result<(), ConnectionError> {
     // Now we have both, let's create the proxy future, which we can hard-abort
-    let (proxyabortable, handle) =
-        futures::future::abortable(Box::pin(
-            async move { proxy(&mut local, &mut tlsstream, start).await },
-        ));
+    let (proxyabortable, handle) = futures::future::abortable(Box::pin(async move {
+        proxy(&mut local, &mut tlsstream, start).await
+    }));
 
     match futures::future::select(
         Box::pin(async move { receiver.wait().await }),
@@ -320,10 +333,12 @@ async fn proxy(
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
 
-    let local2ebb =
-        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start.clone()).await });
-    let ebb2local =
-        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start.clone()).await });
+    let local2ebb = Box::pin(async move {
+        copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start.clone()).await
+    });
+    let ebb2local = Box::pin(async move {
+        copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start.clone()).await
+    });
 
     match futures::future::select(local2ebb, ebb2local).await {
         Either::Left((_server_read_res, _c2s_future)) => (),

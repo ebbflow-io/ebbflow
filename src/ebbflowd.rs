@@ -5,11 +5,11 @@ use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use futures::future::BoxFuture;
+use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use rustls::RootCertStore;
 use std::sync::Arc;
-use notify::{Config, Watcher, RecommendedWatcher, RecursiveMode, event::Event, event::EventKind};
-use tokio::sync::Notify;
 use std::time::Duration;
+use tokio::sync::Notify;
 
 #[tokio::main]
 async fn main() {
@@ -20,18 +20,20 @@ async fn main() {
 
     // TODO: see if there is an override so if this fails we are still ok?
     let hostname: String = match hostname::get() {
-        Ok(s) => match s.to_str() {
-            Some(s) => s.to_string(),
-            None => {
-                eprintln!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
-                error!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
-                std::process::exit(1); 
+        Ok(s) => {
+            match s.to_str() {
+                Some(s) => s.to_string(),
+                None => {
+                    eprintln!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
+                    error!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
+                    std::process::exit(1);
+                }
             }
         }
         Err(e) => {
             eprintln!("Error retrieving the hostname from the OS {:?}", e);
             error!("Error retrieving the hostname from the OS {:?}", e);
-            std::process::exit(1); 
+            std::process::exit(1);
         }
     };
     let roots = match load_roots() {
@@ -45,25 +47,28 @@ async fn main() {
 
     let notify = Arc::new(Notify::new());
     let notifyc = notify.clone();
-    let mut watcher: RecommendedWatcher = Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
-        trace!("Received a notification");
-        match res {
-            Ok(event) => {
-                match event.kind {
+    let mut watcher: RecommendedWatcher =
+        Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
+            trace!("Received a notification");
+            match res {
+                Ok(event) => match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
                         debug!("Received a notication for create or modify");
                         notifyc.notify();
                     }
                     _ => {
-                        trace!("Received notication for an event that we don't care about {:#?}", event);
+                        trace!(
+                            "Received notication for an event that we don't care about {:#?}",
+                            event
+                        );
                     }
+                },
+                Err(e) => {
+                    panic!("Error listening for file events {:?}", e);
                 }
             }
-            Err(e) => {
-                panic!("Error listening for file events {:?}", e);
-            }
-        }
-    }).expect("Unable to create file event listener");
+        })
+        .expect("Unable to create file event listener");
 
     // We only care about mutations
     if let Err(e) = watcher.configure(Config::PreciseEvents(true)) {
@@ -80,7 +85,16 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let sharedinfo = Arc::new(SharedInfo::new_with_ebbflow_overrides("127.0.0.1:7070".parse().unwrap(), "s.preview.ebbflow.io".to_string(), roots, hostname).await.unwrap());
+    let sharedinfo = Arc::new(
+        SharedInfo::new_with_ebbflow_overrides(
+            "127.0.0.1:7070".parse().unwrap(),
+            "s.preview.ebbflow.io".to_string(),
+            roots,
+            hostname,
+        )
+        .await
+        .unwrap(),
+    );
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
 

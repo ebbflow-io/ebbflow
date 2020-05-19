@@ -7,16 +7,12 @@ async fn main() {
     println!("Hey, not sleeping done now bye");
 }
 
-async fn init() {
+async fn init() {}
 
-}
-
-async fn set_key() {
-
-}
+async fn set_key() {}
 
 // init
-// gets keys, sets 
+// gets keys, sets
 // status (endpoints and ssh)
 // get config file loc
 

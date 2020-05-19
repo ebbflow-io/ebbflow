@@ -2,7 +2,7 @@ pub mod connection;
 
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
 use crate::dns::DnsResolver;
-use crate::signal::{SignalSender, SignalReceiver};
+use crate::signal::{SignalReceiver, SignalSender};
 use futures::future::select;
 use futures::future::Either;
 use parking_lot::Mutex;
@@ -11,11 +11,11 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rustls::{ClientConfig, RootCertStore};
 use std::net::SocketAddrV4;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio_rustls::TlsConnector;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
+use tokio_rustls::TlsConnector;
 
 const EBBFLOW_DNS: &str = "s.preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
 const EBBFLOW_PORT: u16 = 7070;
@@ -40,7 +40,13 @@ impl SharedInfo {
         roots: RootCertStore,
         hostname: String,
     ) -> Result<Self, ()> {
-        Self::innernew(Some(hardcoded_ebbflow_addr), Some(hardcoded_ebbflow_dns), roots, hostname).await
+        Self::innernew(
+            Some(hardcoded_ebbflow_addr),
+            Some(hardcoded_ebbflow_dns),
+            roots,
+            hostname,
+        )
+        .await
     }
 
     async fn innernew(
@@ -91,7 +97,6 @@ impl SharedInfo {
             .await
             .unwrap_or_else(|_| Vec::new()); // TODO: Return fallback IPs here
 
-
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);
         SocketAddrV4::new(chosen.unwrap().clone(), EBBFLOW_PORT)
@@ -99,7 +104,9 @@ impl SharedInfo {
 
     pub fn ebbflow_dns(&self) -> webpki::DNSName {
         if let Some(overridden) = &self.hardcoded_ebbflow_dns {
-            webpki::DNSNameRef::try_from_ascii_str(&overridden).unwrap().to_owned()
+            webpki::DNSNameRef::try_from_ascii_str(&overridden)
+                .unwrap()
+                .to_owned()
         } else {
             webpki::DNSNameRef::try_from_ascii_str(EBBFLOW_DNS)
                 .unwrap()
@@ -182,7 +189,13 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<En
         {
             Either::Left(_) => {
                 tokio::time::delay_for(POST_CANCEL_DELAY).await;
-                debug!("Endpoint runner told to stop {}, {:?} later current i{} a{}", e, POST_CANCEL_DELAY, metac2.num_idle(), metac2.num_active());
+                debug!(
+                    "Endpoint runner told to stop {}, {:?} later current i{} a{}",
+                    e,
+                    POST_CANCEL_DELAY,
+                    metac2.num_idle(),
+                    metac2.num_active()
+                );
             }
             Either::Right(_) => info!("Unreachable? inner_run_endpoint finished"),
         }
@@ -190,7 +203,12 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<En
     meta
 }
 
-async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver: SignalReceiver, meta: Arc<EndpointMeta>) {
+async fn inner_run_endpoint(
+    info: Arc<SharedInfo>,
+    args: EndpointArgs,
+    receiver: SignalReceiver,
+    meta: Arc<EndpointMeta>,
+) {
     let mut ccfg = ClientConfig::new();
     ccfg.root_store = info.roots();
     let idlesem = Arc::new(Semaphore::new(args.idleconns));
@@ -203,7 +221,11 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
 
         // We can never have more than MAX permits out, we must have one to have a connection.
         let maxpermit = maxsemc.acquire_owned().await;
-        trace!("acquired max permit i{} a{}", meta.num_idle(), meta.num_active());
+        trace!(
+            "acquired max permit i{} a{}",
+            meta.num_idle(),
+            meta.num_active()
+        );
         // Once we are OK with our max, we must have an IDLE connection available
         let idlepermit = idlesemc.acquire_owned().await;
         trace!("acquired idle permit");
@@ -216,7 +238,11 @@ async fn inner_run_endpoint(info: Arc<SharedInfo>, args: EndpointArgs, receiver:
             args.endpoint, args.local_addr
         );
         let m = meta.clone();
-        trace!("ebbflow addrs {:?} dns {:?}", args.ebbflow_addr, args.ebbflow_dns);
+        trace!(
+            "ebbflow addrs {:?} dns {:?}",
+            args.ebbflow_addr,
+            args.ebbflow_dns
+        );
         tokio::spawn(async move {
             run_connection(receiverc, args, idlepermit, m.clone()).await;
             error!("Connection ended i{} a{}", m.num_idle(), m.num_active());
