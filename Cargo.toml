@@ -21,8 +21,7 @@ name = "ebbflowd"
 path = "src/ebbflowd.rs"
 
 [dependencies]
-clap = "2.33.1"
-dotenv = "0.15.0"
+clap = "3.0.0-beta.1"
 env_logger = "0.7.1"
 futures = "0.3.5"
 hostname = "0.3"

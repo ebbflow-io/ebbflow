@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::Error as IoError;
 use tokio::io::ErrorKind;
-
+use tokio::fs::OpenOptions as TokioOpenOptions;
+use std::fs::OpenOptions;
 #[derive(Debug)]
 pub enum ConfigError {
     Parsing,
     FileNotFound,
     FilePermissions,
-    AlreadyExists,
     Unknown(String),
 }
 
@@ -37,6 +37,15 @@ pub struct EbbflowDaemonConfig {
 }
 
 impl EbbflowDaemonConfig {
+    pub async fn check_permissions() -> Result<(), ConfigError> {
+        let mut std = OpenOptions::new();
+        std.write(true).create(true).truncate(true);
+        let options = TokioOpenOptions::from(std);
+        
+        options.open(CONFIG_FILE).await?;
+        Ok(())
+    }
+
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
         let filebytes = fs::read(CONFIG_FILE).await?;
 
