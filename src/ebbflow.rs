@@ -1,5 +1,5 @@
 use clap::Clap;
-use ebb_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
+use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::hostname_or_die;
 use regex::Regex;

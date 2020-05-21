@@ -8,10 +8,6 @@ This is the end-host client for [`ebbflow`](https://ebbflow.io). This is used to
 ebbflow --help
 ```
 
-The client has two modes, `tcp` and `ssh`, and you select one of these modes when starting the client. Check out the help pages for each command by doing `ebbflow tcp --help` or `ebbflow ssh --help`.
-
-**NOTE** By default, only `1` connection is proxied. This is intended to allow you to test without having tons of logs thrown at you.
-
 ## Downloading, Updating, and Removing
 
 Mac
@@ -28,18 +24,17 @@ brew remove ebbflow
 
 Debian Linux
 ```
-# Go to github releases, find the latest release, and copy the link to the .deb file
-wget http://github.com/.../ebbflow_VERSION_amd64.deb
-sudo apt install ./ebbflow_VERSION_amd64.deb
+Coming Soon
+```
 
-# To Update
-# Go to github releases, find the latest release.. download
-wget http://github.com/.../ebbflow_VERSION_amd64.deb
-sudo apt install ./ebbflow_VERSION_amd64.deb
+RPM based Linux
+```
+Coming Soon
+```
 
-
-# To remove
-sudo dpkg -P ebbflow
+Windows
+```
+coming soon
 ```
 
 More instructions coming soon.
@@ -49,6 +44,9 @@ More instructions coming soon.
 ## Building & Testing
 
 ### Building Packages
+
+**NOTE** To statically build packages, see [ebbflow-build](https://github.com/ebbflow-io/ebbflow-build).
+
 - Install `cargo-deb`: https://crates.io/crates/cargo-deb
 ```
 cargo deb
