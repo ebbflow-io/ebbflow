@@ -3,8 +3,8 @@ extern crate log;
 
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
-use ebbflow::run_daemon;
 use ebbflow::hostname_or_die;
+use ebbflow::run_daemon;
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use rustls::RootCertStore;

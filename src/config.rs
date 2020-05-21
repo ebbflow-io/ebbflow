@@ -1,10 +1,10 @@
 use crate::CONFIG_FILE;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
 use tokio::fs;
+use tokio::fs::OpenOptions as TokioOpenOptions;
 use tokio::io::Error as IoError;
 use tokio::io::ErrorKind;
-use tokio::fs::OpenOptions as TokioOpenOptions;
-use std::fs::OpenOptions;
 #[derive(Debug)]
 pub enum ConfigError {
     Parsing,
@@ -41,7 +41,7 @@ impl EbbflowDaemonConfig {
         let mut std = OpenOptions::new();
         std.write(true).create(true);
         let options = TokioOpenOptions::from(std);
-        
+
         options.open(CONFIG_FILE).await?;
         Ok(())
     }

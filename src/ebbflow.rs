@@ -1,15 +1,18 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+use clap::Clap;
+use ebb_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::hostname_or_die;
-use clap::Clap;
-use std::time::Duration;
-use std::io;
-use std::{fmt::{Formatter, Display}, io::Error as IoError};
 use regex::Regex;
-use ebb_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use reqwest::StatusCode;
+use std::io;
+use std::time::Duration;
+use std::{
+    fmt::{Display, Formatter},
+    io::Error as IoError,
+};
 
 #[derive(Debug, Clap)]
 struct Opts {
@@ -65,13 +68,12 @@ impl Display for EnableDisableArgs {
 #[derive(Debug, Clap)]
 struct _InitArgs {
     /// Should SSH be enabled or disabled
-    #[clap(default_value="true", parse(try_from_str))]
+    #[clap(default_value = "true", parse(try_from_str))]
     enable_ssh: bool,
 
     /// Specify the account id for this host
     #[clap()]
     account_id: Option<String>,
-
     // endpoints: Vec<EndpointArg>,
 }
 
@@ -111,8 +113,12 @@ async fn main() {
     let opts: Opts = Opts::parse();
 
     let result: Result<(), CliError> = match opts.subcmd {
-        SubCommand::Enable(args) => handle_enable_disable_ret(&args, enabledisable(true, &args).await),
-        SubCommand::Disable(args) => handle_enable_disable_ret(&args, enabledisable(false, &args).await),
+        SubCommand::Enable(args) => {
+            handle_enable_disable_ret(&args, enabledisable(true, &args).await)
+        }
+        SubCommand::Disable(args) => {
+            handle_enable_disable_ret(&args, enabledisable(false, &args).await)
+        }
         SubCommand::Init => init().await,
     };
 
@@ -131,7 +137,10 @@ async fn main() {
     }
 }
 
-fn handle_enable_disable_ret(args: &EnableDisableArgs, ret: Result<bool, CliError>) -> Result<(), CliError> {
+fn handle_enable_disable_ret(
+    args: &EnableDisableArgs,
+    ret: Result<bool, CliError>,
+) -> Result<(), CliError> {
     match ret {
         Ok(b) => {
             if b {
@@ -158,7 +167,9 @@ async fn init() -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
     let mut hostname = hostname_or_die();
 
-    println!("Would you like to have the SSH proxy enabled for this host? Please type yes, y, no, or n");
+    println!(
+        "Would you like to have the SSH proxy enabled for this host? Please type yes, y, no, or n"
+    );
     let enablessh = loop {
         let mut yn = String::new();
         io::stdin().read_line(&mut yn)?;
@@ -166,7 +177,10 @@ async fn init() -> Result<(), CliError> {
             Some(enabled) => break enabled,
             None => {}
         }
-        println!("Could not parse {} into yes or no (or y or n), please retry", yn.trim());
+        println!(
+            "Could not parse {} into yes or no (or y or n), please retry",
+            yn.trim()
+        );
     };
 
     if enablessh {
@@ -178,7 +192,10 @@ async fn init() -> Result<(), CliError> {
                 Some(yn) => break yn,
                 None => {}
             }
-            println!("Could not parse {} into yes or no (or y or n), please retry", yn.trim());
+            println!(
+                "Could not parse {} into yes or no (or y or n), please retry",
+                yn.trim()
+            );
         } {
             println!("What would you like the host to be identified as for SSH proxy?");
             let r = Regex::new(r"^[-\.[:alnum:]]{1,220}$").unwrap();
@@ -232,51 +249,68 @@ async fn poll_key_creation(finalizeme: HostKeyInitFinalizationContext) -> Result
     let client = reqwest::Client::new();
     loop {
         tokio::time::delay_for(Duration::from_secs(5)).await;
-        match client.post(&format!("https://api.preview.ebbflow.io:4443/v1/hostkeyinit/{}", finalizeme.id))
-        .json(&finalizeme)
-        .send()
-        .await {
-            Ok(response) => {
-                match response.status() {
-                    StatusCode::OK => {
-                        use std::io::Write;
-                        print!("\n");
-                        let _ = std::io::stdout().flush();
-                        let keydata: KeyData = response.json().await?;
-                        return Ok(keydata.key);
-                    },
-                    StatusCode::ACCEPTED => {
-                        use std::io::Write;
-                        print!(".");
-                        let _ = std::io::stdout().flush();
-                    }
-                    StatusCode::NOT_FOUND => {}
-                    _ => println!("Unexpected status code from Ebbflow, weird! {}", response.status()),
-                    
+        match client
+            .post(&format!(
+                "https://api.preview.ebbflow.io:4443/v1/hostkeyinit/{}",
+                finalizeme.id
+            ))
+            .json(&finalizeme)
+            .send()
+            .await
+        {
+            Ok(response) => match response.status() {
+                StatusCode::OK => {
+                    use std::io::Write;
+                    print!("\n");
+                    let _ = std::io::stdout().flush();
+                    let keydata: KeyData = response.json().await?;
+                    return Ok(keydata.key);
                 }
+                StatusCode::ACCEPTED => {
+                    use std::io::Write;
+                    print!(".");
+                    let _ = std::io::stdout().flush();
+                }
+                StatusCode::NOT_FOUND => {}
+                _ => println!(
+                    "Unexpected status code from Ebbflow, weird! {}",
+                    response.status()
+                ),
             },
-            Err(e) =>  println!("Error polling key creation, will just retry. For debugging: {:?}", e),
+            Err(e) => println!(
+                "Error polling key creation, will just retry. For debugging: {:?}",
+                e
+            ),
         }
     }
 }
 
 fn print_url_instructions(url: String) {
-    println!("Please go to {} to initialize the secret key for this host\n", url);
+    println!(
+        "Please go to {} to initialize the secret key for this host\n",
+        url
+    );
 }
 
 // Gets a URL to display, and then the ID that will be used to poll with, and the secret to use when polling
-async fn create_key_request(hostname: &str) -> Result<(String, HostKeyInitFinalizationContext), CliError> {
+async fn create_key_request(
+    hostname: &str,
+) -> Result<(String, HostKeyInitFinalizationContext), CliError> {
     let init = HostKeyInitContext::new(hostname.to_string());
 
     let client = reqwest::Client::new();
-    let finalizeme: HostKeyInitFinalizationContext = client.post("https://api.preview.ebbflow.io:4443/v1/hostkeyinit")
+    let finalizeme: HostKeyInitFinalizationContext = client
+        .post("https://api.preview.ebbflow.io:4443/v1/hostkeyinit")
         .json(&init)
         .send()
         .await?
         .json()
         .await?;
 
-    Ok((format!("https://ebbflow.io/init/{}", finalizeme.id), finalizeme))
+    Ok((
+        format!("https://ebbflow.io/init/{}", finalizeme.id),
+        finalizeme,
+    ))
 }
 
 // init
