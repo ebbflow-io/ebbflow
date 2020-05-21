@@ -3,7 +3,6 @@ extern crate log;
 
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
-use ebbflow::hostname_or_die;
 use ebbflow::run_daemon;
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
@@ -20,7 +19,6 @@ async fn main() {
         .init();
 
     // TODO: see if there is an override so if this fails we are still ok?
-    let hostname: String = hostname_or_die();
     let roots = match load_roots() {
         Some(r) => r,
         None => {
@@ -75,7 +73,6 @@ async fn main() {
             "127.0.0.1:7070".parse().unwrap(),
             "s.preview.ebbflow.io".to_string(),
             roots,
-            hostname,
         )
         .await
         .unwrap(),

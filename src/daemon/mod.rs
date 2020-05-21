@@ -26,25 +26,22 @@ pub struct SharedInfo {
     roots: Mutex<RootCertStore>,
     hardcoded_ebbflow_addr: Option<SocketAddrV4>,
     hardcoded_ebbflow_dns: Option<String>,
-    hostname: String,
 }
 
 impl SharedInfo {
-    pub async fn new(roots: RootCertStore, hostname: String) -> Result<Self, ()> {
-        Self::innernew(None, None, roots, hostname).await
+    pub async fn new(roots: RootCertStore) -> Result<Self, ()> {
+        Self::innernew(None, None, roots).await
     }
 
     pub async fn new_with_ebbflow_overrides(
         hardcoded_ebbflow_addr: SocketAddrV4,
         hardcoded_ebbflow_dns: String,
         roots: RootCertStore,
-        hostname: String,
     ) -> Result<Self, ()> {
         Self::innernew(
             Some(hardcoded_ebbflow_addr),
             Some(hardcoded_ebbflow_dns),
             roots,
-            hostname,
         )
         .await
     }
@@ -53,7 +50,6 @@ impl SharedInfo {
         overriddenmaybe: Option<SocketAddrV4>,
         overridedns: Option<String>,
         roots: RootCertStore,
-        hostname: String,
     ) -> Result<Self, ()> {
         Ok(Self {
             dns: DnsResolver::new().await?,
@@ -61,12 +57,7 @@ impl SharedInfo {
             roots: Mutex::new(roots),
             hardcoded_ebbflow_addr: overriddenmaybe,
             hardcoded_ebbflow_dns: overridedns,
-            hostname,
         })
-    }
-
-    pub fn hostname(&self) -> String {
-        self.hostname.clone()
     }
 
     pub fn update_key(&self, newkey: String) {

@@ -21,9 +21,7 @@ use tokio::sync::Notify;
 pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
 pub const CONFIG_FILE: &str = "/etc/ebbflow/config.yaml"; // Linux
 
-const MAX_MAX_IDLE: usize = 100;
-const DEFAULT_MAX_IDLE: usize = 8;
-const DEFAULT_MAX_IDLE_SSH: usize = 2;
+pub const MAX_MAX_IDLE: usize = 100;
 // const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
 const LOAD_ROOTS_DELAY: Duration = Duration::from_secs(60 * 60 * 36); // very rare
 
@@ -43,7 +41,7 @@ pub enum DaemonStatusMeta {
 pub struct DaemonStatus {
     pub meta: DaemonStatusMeta,
     pub endpoints: Vec<(String, DaemonEndpointStatus)>,
-    pub ssh: DaemonEndpointStatus,
+    pub ssh: Option<DaemonEndpointStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +94,7 @@ struct SshConfiguration {
     max: usize,
     hostname: String,
     enabled: bool,
+    maxidle: usize,
 }
 
 pub enum EnableDisableTarget {
@@ -134,7 +133,7 @@ impl DaemonRunner {
 struct InnerDaemonRunner {
     endpoints: HashMap<String, EndpointInstance>,
     statusmeta: DaemonStatusMeta,
-    ssh: SshInstance,
+    ssh: Option<SshInstance>,
     info: Arc<SharedInfo>,
 }
 
@@ -142,10 +141,7 @@ impl InnerDaemonRunner {
     pub fn new(info: Arc<SharedInfo>) -> Self {
         Self {
             endpoints: HashMap::new(),
-            ssh: SshInstance {
-                enabledisable: EnabledDisabled::Disabled,
-                existing_config: defaultsshconfig(info.hostname()),
-            },
+            ssh: None,
             statusmeta: DaemonStatusMeta::Uninitialized,
             info,
         }
@@ -229,42 +225,47 @@ impl InnerDaemonRunner {
                 }
             }
         }
-
-        // SSH Related
-        let hostname: Option<String> = config.ssh.hostname_override.clone();
-        let hostname = hostname.unwrap_or_else(|| self.info.hostname());
-
-        let newconfig = SshConfiguration {
-            port: config.ssh.port,
-            max: config.ssh.maxconns as usize,
-            hostname,
-            enabled: config.ssh.enabled,
-        };
-
-        // If something changed, we know we will stop the existing one
-        if newconfig != self.ssh.existing_config {
-            trace!("Old config\n{:#?}", self.ssh.existing_config);
-            trace!("New config\n{:#?}", newconfig);
-            self.ssh.enabledisable.stop();
-
-            //We have a different config, and its new, lets start the new one.
-            if newconfig.enabled {
-                // start the new one and set it
-                let args = EndpointArgs {
-                    ctype: EndpointConnectionType::Ssh,
-                    idleconns: DEFAULT_MAX_IDLE_SSH,
-                    maxconns: newconfig.max,
-                    endpoint: newconfig.hostname.clone(),
-                    local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
+        
+        match (config.ssh, &mut self.ssh) {
+            (Some(newcfg), ssh) => {
+                let newconfig = SshConfiguration {
+                    port: newcfg.port,
+                    max: newcfg.maxconns as usize,
+                    hostname: newcfg.hostname,
+                    enabled: newcfg.enabled,
+                    maxidle: newcfg.maxidle as usize,
                 };
 
-                let meta = spawn_endpoint(self.info.clone(), args).await;
-                self.ssh.enabledisable = EnabledDisabled::Enabled(meta);
-            }
-        }
+                if ssh.is_none() || newconfig != ssh.as_ref().unwrap().existing_config {
+                    let enabledisabled = if newconfig.enabled {
+                        // start the new one and set it
+                        let args = EndpointArgs {
+                            ctype: EndpointConnectionType::Ssh,
+                            idleconns: newconfig.maxidle,
+                            maxconns: newconfig.max,
+                            endpoint: newconfig.hostname.clone(),
+                            local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
+                        };
 
-        // Either its new, and we want to set it to the new one, or its the same, and this is OK.
-        self.ssh.existing_config = newconfig;
+                        let meta = spawn_endpoint(self.info.clone(), args).await;
+                        EnabledDisabled::Enabled(meta)
+                    } else {
+                        EnabledDisabled::Disabled
+                    };
+
+                    self.ssh = Some(SshInstance {
+                        existing_config: newconfig,
+                        enabledisable: enabledisabled,
+                    });
+                }
+                // else they are equal so do nothing
+            }
+            (None, Some(oldcfg)) => {
+                oldcfg.enabledisable.stop();
+                self.ssh = None;
+            }
+            (None, None) => {}
+        }
     }
 
     pub fn update_roots(&self, roots: RootCertStore) {
@@ -272,8 +273,10 @@ impl InnerDaemonRunner {
     }
 
     pub fn status(&self) -> DaemonStatus {
-        let ssh = DaemonEndpointStatus::from_ref(&self.ssh.enabledisable);
-
+        let ssh = match &self.ssh {
+            Some(sshinstance) => Some(DaemonEndpointStatus::from_ref(&sshinstance.enabledisable)),
+            None => None,
+        };
         let e = self
             .endpoints
             .iter()
@@ -288,33 +291,21 @@ impl InnerDaemonRunner {
     }
 }
 
-fn defaultsshconfig(hostname: String) -> SshConfiguration {
-    SshConfiguration {
-        hostname,
-        port: 22,
-        max: 20,
-        enabled: false,
-    }
-}
-
 pub async fn spawn_endpointasdfsfa(
     e: crate::config::Endpoint,
     info: Arc<SharedInfo>,
 ) -> Arc<EndpointMeta> {
-    let address = e
-        .address_override
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-
+    let address = "127.0.0.1";
     let ip = address.parse().unwrap();
 
     let port = e.port;
 
-    let idle = e.idleconns_override.unwrap_or(DEFAULT_MAX_IDLE);
-    let idle = std::cmp::min(idle, MAX_MAX_IDLE);
+    let idle = e.maxidle;
+    let idle = std::cmp::min(idle, MAX_MAX_IDLE as u16);
 
     let args = EndpointArgs {
         ctype: EndpointConnectionType::Tls,
-        idleconns: idle,
+        idleconns: idle as usize,
         maxconns: e.maxconns as usize,
         endpoint: e.dns,
         local_addr: SocketAddrV4::new(ip, port),

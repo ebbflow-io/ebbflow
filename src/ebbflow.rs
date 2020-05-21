@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-extern crate env_logger;
 use clap::Clap;
 use ebb_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
@@ -14,29 +11,38 @@ use std::{
     io::Error as IoError,
 };
 
+const DEFAULT_SSH_CONNS: u16 = 10;
+const DEFAULT_SSH_IDLE: u16 = 3;
+const DEFAULT_EBBFLOW_API_ADDR: &str = "https://api.ebbflow.io/v1";
+const DEFAULT_EBBFLOW_SITE_ADDR: &str = "https://ebbflow.io/init";
+
 #[derive(Debug, Clap)]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
+
+    #[clap(hidden = true)]
+    ebbflow_addr: Option<String>,
 }
 
 #[derive(Debug, Clap)]
 enum SubCommand {
     /// Run the interactive initialization, retrieves a host key and sets up basic settings
-    #[clap()]
     Init,
     /// Enable endpoint(s) or SSH proxying
-    #[clap()]
     Enable(EnableDisableArgs),
     /// Disable endpoint(s) or SSH proxying
-    #[clap()]
     Disable(EnableDisableArgs),
-    // Retrieve the status of the Daemon. (NOTE: Output subject to change)
-    // #[clap()]
-    // Status,
-    // Prints the current configuration
-    // #[clap()]
-    // PrintConfig,
+    /// Add a new endpoint
+    AddEndpoint(AddEndpointArgs),
+    /// Remove (and shut down) an endpoint
+    RemoveEndpoint(RemoveEndpointArgs),
+    /// Set up the SSH configuration. Defaults are provided for all arguments.
+    SetupSsh(SetupSshArgs),
+    /// Remove the SSH configuration, disabling the proxy
+    RemoveSshConfiguration,
+    /// Prints the current configuration (NOTE: Output subject to change)
+    PrintConfig,
 }
 
 #[derive(Debug, Clap)]
@@ -45,7 +51,52 @@ struct EndpointDns {
 }
 
 #[derive(Debug, Clap)]
-enum EnableDisableArgs {
+struct SetupSshArgs {
+    /// The max number of connections, default 10
+    maxconns: Option<u16>,
+    /// The port the SSH daemon runs on, default 22
+    port: Option<u16>,
+    /// The hostname to use, default is taken from OS
+    hostname: Option<String>,
+    /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    maxidle: Option<u16>,
+}
+
+#[derive(Debug, Clap)]
+struct AddEndpointArgs {
+    /// The DNS value of this endpoint
+    dns: String,
+    /// The port the local service runs on (NUM)
+    local_port: u16,
+    /// the maximum amount of open connections, defaults to 200 (NUM)
+    maxconns: Option<u16>,
+     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    maxidle: Option<usize>,
+    // The address the application runs on locally, defaults to 127.0.0.1
+    // address_override: Option<String>,
+}
+
+#[derive(Debug, Clap)]
+struct RemoveEndpointArgs {
+    /// The DNS value of the endpoint to remove and shut down.
+    dns: String,
+    /// If you want this to succeed in case it didn't exist already,pass this
+    #[clap(short, long)]
+    idempotent: bool,
+}
+
+#[derive(Debug, Clap)]
+struct EnableDisableArgs {
+    /// The target to enable or disable
+    #[clap(subcommand)]
+    target: EnableDisableTarget,
+    /// If you want this to succeed in case it didn't exist already, pass this
+    #[clap(short, long)]
+    idempotent: bool,
+}
+
+#[derive(Debug, Clap)]
+enum EnableDisableTarget {
     /// This action will apply to the SSH proxy
     Ssh,
     /// This action will apply to all endpoints
@@ -54,33 +105,15 @@ enum EnableDisableArgs {
     Endpoint(EndpointDns),
 }
 
-impl Display for EnableDisableArgs {
+impl Display for EnableDisableTarget {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = match self {
-            EnableDisableArgs::Ssh => "Ssh".to_owned(),
-            EnableDisableArgs::AllEndpoints => "All Endpoints".to_owned(),
-            EnableDisableArgs::Endpoint(s) => s.dns.to_owned(),
+            EnableDisableTarget::Ssh => "Ssh".to_owned(),
+            EnableDisableTarget::AllEndpoints => "All Endpoints".to_owned(),
+            EnableDisableTarget::Endpoint(s) => s.dns.to_owned(),
         };
         write!(f, "{}", str)
     }
-}
-
-#[derive(Debug, Clap)]
-struct _InitArgs {
-    /// Should SSH be enabled or disabled
-    #[clap(default_value = "true", parse(try_from_str))]
-    enable_ssh: bool,
-
-    /// Specify the account id for this host
-    #[clap()]
-    account_id: Option<String>,
-    // endpoints: Vec<EndpointArg>,
-}
-
-#[derive(Debug, Clap)]
-struct EndpointArg {
-    port: u16,
-    dns: String,
 }
 
 #[derive(Debug)]
@@ -112,14 +145,21 @@ impl From<ConfigError> for CliError {
 async fn main() {
     let opts: Opts = Opts::parse();
 
+    let addr = opts.ebbflow_addr.unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
+
     let result: Result<(), CliError> = match opts.subcmd {
         SubCommand::Enable(args) => {
-            handle_enable_disable_ret(&args, enabledisable(true, &args).await)
+            handle_enable_disable_ret(true, &args, enabledisable(true, &args.target).await)
         }
         SubCommand::Disable(args) => {
-            handle_enable_disable_ret(&args, enabledisable(false, &args).await)
+            handle_enable_disable_ret(false, &args, enabledisable(false, &args.target).await)
         }
-        SubCommand::Init => init().await,
+        SubCommand::Init => init(&addr).await,
+        SubCommand::AddEndpoint(args) => add_endpoint(args).await,
+        SubCommand::RemoveEndpoint(args) => remove_endpoint(args).await,
+        SubCommand::PrintConfig => printconfignokey().await,
+        SubCommand::SetupSsh(args) => setup_ssh(args).await,
+        SubCommand::RemoveSshConfiguration => remove_ssh().await,
     };
 
     match result {
@@ -131,28 +171,38 @@ async fn main() {
                 ConfigError::Parsing => exiterror("Failed to parse configuration properly, please notify Ebbflow"),
                 ConfigError::Unknown(s) => exiterror(&format!("Unexpected error: {}, Please notify Ebbflow", s)),
             }
-            CliError::StdIoError(e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
+            CliError::StdIoError(_e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
             CliError::Http(e) => exiterror(&format!("Problem making HTTP request to Ebbflow, please try again soon. For debugging: {:?}", e)),
         }
     }
 }
 
 fn handle_enable_disable_ret(
+    enable: bool,
     args: &EnableDisableArgs,
-    ret: Result<bool, CliError>,
+    ret: Result<(bool, bool), CliError>,
 ) -> Result<(), CliError> {
+
+    let word = if enable {
+        "enabled"
+    } else {
+        "disabled"
+    };
+
     match ret {
-        Ok(b) => {
-            if b {
-                Ok(())
+        Ok((found, mutated)) => match (found, mutated) {
+            (true, true) => Ok(()),
+            (true, false) => if !args.idempotent {
+                exiterror(&format!("The specified target was not {}: {}", word, args.target))
             } else {
-                if let EnableDisableArgs::AllEndpoints = args {
-                    exiterror(&format!("Nothing to change, no endpoints are configured"));
-                } else {
-                    exiterror(&format!("The specified target does not exist: {}", args));
-                }
+                Ok(())
+            },
+            (false, _) => match (enable, args.idempotent) {
+                (true, _) => exiterror(&format!("The specified target was not enabled as it is not configured: {}", args.target)),
+                (false, false) => exiterror(&format!("Unable to disable target {} as it is not configured", args.target)),
+                (false, true) => Ok(()),
             }
-        }
+        },
         Err(e) => Err(e),
     }
 }
@@ -163,7 +213,7 @@ fn exiterror(s: &str) -> ! {
 }
 
 // Uses AccountId, creates a key, then prompts for endpoint/port combos and if SSH should be enabled
-async fn init() -> Result<(), CliError> {
+async fn init(addr: &str) -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
     let mut hostname = hostname_or_die();
 
@@ -183,7 +233,7 @@ async fn init() -> Result<(), CliError> {
         );
     };
 
-    if enablessh {
+    let sshcfg = if enablessh {
         println!("The hostname {} will be used to identify this host in the ebbflow proxy\ne.g. Clients will execute `ssh -J ebbflow.io {}`, is that ok?", hostname, hostname);
         if !loop {
             let mut yn = String::new();
@@ -212,20 +262,20 @@ async fn init() -> Result<(), CliError> {
                 }
             }
         }
-    }
+        Some(Ssh::new(enablessh, hostname.clone()))
+    } else {
+        None
+    };
 
-    let (url, finalizeme) = create_key_request(&hostname).await?;
+    let (url, finalizeme) = create_key_request(&hostname, addr).await?;
     print_url_instructions(url);
 
-    let key = poll_key_creation(finalizeme).await?;
+    let key = poll_key_creation(finalizeme, addr).await?;
 
     println!("Great! The key has been provisioned.");
 
-    let mut ssh = Ssh::new(enablessh);
-    ssh.hostname_override = Some(hostname);
-
     let cfg = EbbflowDaemonConfig {
-        ssh,
+        ssh: sshcfg,
         endpoints: vec![],
         key,
     };
@@ -244,14 +294,15 @@ fn extract_yn(yn: &str) -> Option<bool> {
 }
 
 // Returns the String
-async fn poll_key_creation(finalizeme: HostKeyInitFinalizationContext) -> Result<String, CliError> {
+async fn poll_key_creation(finalizeme: HostKeyInitFinalizationContext, addr: &str,) -> Result<String, CliError> {
     print!("Waiting for key creation to be completed");
     let client = reqwest::Client::new();
     loop {
         tokio::time::delay_for(Duration::from_secs(5)).await;
         match client
             .post(&format!(
-                "https://api.preview.ebbflow.io:4443/v1/hostkeyinit/{}",
+                "{}/hostkeyinit/{}",
+                addr,
                 finalizeme.id
             ))
             .json(&finalizeme)
@@ -295,12 +346,13 @@ fn print_url_instructions(url: String) {
 // Gets a URL to display, and then the ID that will be used to poll with, and the secret to use when polling
 async fn create_key_request(
     hostname: &str,
+    addr: &str,
 ) -> Result<(String, HostKeyInitFinalizationContext), CliError> {
     let init = HostKeyInitContext::new(hostname.to_string());
 
     let client = reqwest::Client::new();
     let finalizeme: HostKeyInitFinalizationContext = client
-        .post("https://api.preview.ebbflow.io:4443/v1/hostkeyinit")
+        .post(&format!("{}/hostkeyinit", addr))
         .json(&init)
         .send()
         .await?
@@ -308,7 +360,7 @@ async fn create_key_request(
         .await?;
 
     Ok((
-        format!("https://ebbflow.io/init/{}", finalizeme.id),
+        format!("{}/{}", DEFAULT_EBBFLOW_SITE_ADDR, finalizeme.id),
         finalizeme,
     ))
 }
@@ -317,52 +369,32 @@ async fn create_key_request(
 // status (endpoints and ssh)
 // get config file loc
 
-async fn enabledisable(enable: bool, args: &EnableDisableArgs) -> Result<bool, CliError> {
+async fn enabledisable(enable: bool, args: &EnableDisableTarget) -> Result<(bool, bool), CliError> {
     match args {
-        EnableDisableArgs::Ssh => set_ssh_enabled(enable).await,
-        EnableDisableArgs::AllEndpoints => set_endpoint_enabled(enable, None).await,
-        EnableDisableArgs::Endpoint(e) => set_endpoint_enabled(enable, Some(&e.dns)).await,
+        EnableDisableTarget::Ssh => set_ssh_enabled(enable).await,
+        EnableDisableTarget::AllEndpoints => set_endpoint_enabled(enable, None).await,
+        EnableDisableTarget::Endpoint(e) => set_endpoint_enabled(enable, Some(&e.dns)).await,
     }
 }
 
-async fn finish_init(
-    key: String,
-    enable_ssh: bool,
-    mut endpoints: Vec<(String, u16)>,
-) -> Result<(), ConfigError> {
-    let endpoints = endpoints
-        .drain(..)
-        .map(|(dns, port)| Endpoint {
-            port,
-            dns,
-            maxconns: 200,
-            idleconns_override: None,
-            address_override: None,
-            enabled: true,
-        })
-        .collect();
-
-    // create the initial config
-    let cfg = EbbflowDaemonConfig {
-        key,
-        endpoints,
-        ssh: Ssh::new(enable_ssh),
-    };
-
-    cfg.save_to_file().await
-}
-
-async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<bool, CliError> {
+async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(bool, bool), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
 
     let mut targeted_found = false;
+    let mut mutated = false;
     for e in existing.endpoints.iter_mut() {
         if let Some(actualdns) = dns {
             if actualdns == &e.dns {
-                e.enabled = enabled;
+                if e.enabled == enabled {
+                    mutated = false;
+                } else {
+                    e.enabled = enabled;
+                    mutated = true;
+                }
                 targeted_found = true;
             }
         } else {
+            mutated = true;
             targeted_found = true;
             e.enabled = enabled;
         }
@@ -370,12 +402,135 @@ async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<bool, 
 
     existing.save_to_file().await?;
 
-    Ok(targeted_found)
+    Ok((targeted_found, mutated))
 }
 
-async fn set_ssh_enabled(enabled: bool) -> Result<bool, CliError> {
+async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
-    existing.ssh.enabled = enabled;
+    let ret = if let Some(ref mut ssh) = &mut existing.ssh {
+        if ssh.enabled == enabled {
+            (true, false)
+        } else {
+            ssh.enabled = enabled;
+            (true, true)
+        }
+        
+    } else {
+        (false, false)
+    };
     existing.save_to_file().await?;
-    Ok(true)
+    Ok(ret)
+}
+
+async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
+    let newendpoint = Endpoint {
+        port: args.local_port,
+        dns: args.dns,
+        maxconns: args.maxconns.unwrap_or(500),
+        maxidle: args.maxidle.unwrap_or(10) as u16,
+        // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
+        enabled: true,
+    };
+
+    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    
+    // make sure it doesn't exist
+    for e in existing.endpoints.iter() {
+        if e.dns == newendpoint.dns {
+            exiterror(&format!("An endpoint of name {} already exists. Please remove it first then create it again", e.dns));
+        }
+    }
+    // Doesn't exist, add it
+    existing.endpoints.push(newendpoint);
+    existing.save_to_file().await?;
+    Ok(())
+}
+
+async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
+    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    
+    let mut deleted = false;
+    // make sure it doesn't exist
+    existing.endpoints.retain(|e| {
+        if e.dns == args.dns {
+            deleted = true;
+            false
+        } else {
+            true
+        }
+    });
+
+    // Not my finest but it'll do
+    let ret = if deleted {
+        Ok(())
+    } else {
+        if args.idempotent {
+            Ok(())
+        } else {
+            exiterror(&format!("Endpoint {} does not exist and was not deleted", args.dns))
+        }
+    };
+
+    existing.save_to_file().await?;
+    ret
+}
+
+async fn printconfignokey() -> Result<(), CliError> {
+    let existing = EbbflowDaemonConfig::load_from_file().await?;
+    println!("Endpoint Configuration");
+    println!("----------------------");
+
+    if !existing.endpoints.is_empty() {
+        let mut max = 0;
+        for e in existing.endpoints.iter() {
+            max = std::cmp::max(max, e.dns.len());
+        }
+
+        println!("{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t", "DNS", width = max);
+        for e in existing.endpoints {
+            println!("{:width$}\t{}\t{}\t{}\t\t{}", e.dns, e.port, e.enabled, e.maxconns, e.maxidle, width = max);
+        }
+    } else {
+        println!("No endpoints configured");
+    }
+    println!("");
+    println!("SSH Configuration");
+    println!("-----------------");
+
+    if let Some(sshcfg) = existing.ssh {
+        let max = sshcfg.hostname.len();
+        println!("{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t", "Hostname", width = max);
+        println!("{:width$}\t{}\t{}\t{}\t\t{}", sshcfg.hostname, sshcfg.port, sshcfg.enabled, sshcfg.maxconns, sshcfg.maxidle, width = max);
+    } else {
+        println!("SSH not configured");
+    }
+
+    Ok(())
+}
+
+
+async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
+    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    if let Some(_existing) = existing.ssh {
+        exiterror("SSH configuration already set up, please remove it and then recreate it");
+    }
+    let idle = std::cmp::min(args.maxidle.unwrap_or_else(|| DEFAULT_SSH_IDLE), ebbflow::MAX_MAX_IDLE as u16);
+
+    existing.ssh = Some(Ssh {
+        maxconns: args.maxconns.unwrap_or(DEFAULT_SSH_CONNS),
+        port: args.port.unwrap_or(22),
+        enabled: true,
+        hostname: args.hostname.unwrap_or_else(|| hostname_or_die()),
+        maxidle: idle,
+    });
+
+    existing.save_to_file().await?;
+    Ok(())
+}
+
+async fn remove_ssh() -> Result<(), CliError> {
+    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    existing.ssh = None;
+    existing.save_to_file().await?;
+    Ok(())
 }

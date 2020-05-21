@@ -149,12 +149,13 @@ mod basic_tests_v0 {
         let cfg = EbbflowDaemonConfig {
             key: "asdf".to_string(),
             endpoints: vec![],
-            ssh: Ssh {
+            ssh: Some(Ssh {
                 port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
-                hostname_override: Some(x),
+                hostname: x,
                 enabled: true,
                 maxconns: 100,
-            },
+                maxidle: 2,
+            }),
         };
 
         let (_notify, _arcmutex, _) = start_basic_daemon(testclientport, cfg).await;
@@ -300,25 +301,24 @@ mod basic_tests_v0 {
                     port: ep0,
                     dns: e0.clone(),
                     maxconns: 1000,
-                    idleconns_override: Some(2),
-                    address_override: None,
+                    maxidle: 2,
                     enabled: true,
                 },
                 Endpoint {
                     port: ep1,
                     dns: e1.clone(),
                     maxconns: 1000,
-                    idleconns_override: Some(3),
-                    address_override: None,
+                    maxidle: 3,
                     enabled: true,
                 },
             ],
-            ssh: Ssh {
+            ssh: Some(Ssh {
                 maxconns: 1,
                 port: sshp,
-                hostname_override: Some(hn),
+                hostname: hn,
                 enabled: true,
-            },
+                maxidle: 1,
+            }),
         };
 
         tokio::spawn(listen_and_process(customerport, testclientport));
@@ -333,7 +333,7 @@ mod basic_tests_v0 {
 
         assert_eq!(DaemonStatusMeta::Good, status.meta);
         assert_eq!(
-            DaemonEndpointStatus::Enabled { active: 0, idle: 1 },
+            Some(DaemonEndpointStatus::Enabled { active: 0, idle: 1 }),
             status.ssh
         );
 
@@ -379,7 +379,6 @@ mod basic_tests_v0 {
             format!("127.0.0.1:{}", ebbport).parse().unwrap(),
             "preview.ebbflow.io".to_string(),
             load_root(),
-            "hostname".to_string(),
         )
         .await
         .unwrap();
@@ -401,16 +400,10 @@ mod basic_tests_v0 {
                 port,
                 dns: "ebbflow.io".to_string(),
                 maxconns: 1000,
-                idleconns_override: Some(1),
-                address_override: None,
+                maxidle: 1,
                 enabled: true,
             }],
-            ssh: Ssh {
-                port: 22,
-                hostname_override: None,
-                enabled: false,
-                maxconns: 100,
-            },
+            ssh: None,
         }
     }
 
