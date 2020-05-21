@@ -4,6 +4,7 @@ extern crate log;
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
+use ebbflow::hostname_or_die;
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use rustls::RootCertStore;
@@ -14,28 +15,12 @@ use tokio::sync::Notify;
 #[tokio::main]
 async fn main() {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Debug)
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 
     // TODO: see if there is an override so if this fails we are still ok?
-    let hostname: String = match hostname::get() {
-        Ok(s) => {
-            match s.to_str() {
-                Some(s) => s.to_string(),
-                None => {
-                    eprintln!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
-                    error!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Error retrieving the hostname from the OS {:?}", e);
-            error!("Error retrieving the hostname from the OS {:?}", e);
-            std::process::exit(1);
-        }
-    };
+    let hostname: String = hostname_or_die();
     let roots = match load_roots() {
         Some(r) => r,
         None => {

@@ -39,7 +39,7 @@ pub struct EbbflowDaemonConfig {
 impl EbbflowDaemonConfig {
     pub async fn check_permissions() -> Result<(), ConfigError> {
         let mut std = OpenOptions::new();
-        std.write(true).create(true).truncate(true);
+        std.write(true).create(true);
         let options = TokioOpenOptions::from(std);
         
         options.open(CONFIG_FILE).await?;
@@ -58,21 +58,6 @@ impl EbbflowDaemonConfig {
         };
 
         Ok(parsed)
-
-        // Ok(EbbflowDaemonConfig {
-        //     key: "ebb_hst_AicTDDfeUh0MnzZsKsn6hBiLlYP0vfutj5ztMd5KBh".to_string(),
-        //     endpoints: vec![Endpoint {
-        //         port: 41402,
-        //         dns: "preview.ebbflow.io".to_string(),
-        //         maxconns: 2,
-        //         idleconns_override: Some(1),
-        //         address_override: None,
-        //         enabled: true,
-        //     }],
-        //     enable_ssh: true,
-        //     ssh: None,
-        // })
-        //Err(ConfigError::FileNotFound)
     }
     pub async fn save_to_file(&self) -> Result<(), ConfigError> {
         let b: String = match serde_yaml::to_string(self) {

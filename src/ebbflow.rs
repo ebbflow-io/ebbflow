@@ -2,9 +2,14 @@
 extern crate log;
 extern crate env_logger;
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
+use ebbflow::hostname_or_die;
 use clap::Clap;
+use std::time::Duration;
 use std::io;
-use std::io::Error as IoError;
+use std::{fmt::{Formatter, Display}, io::Error as IoError};
+use regex::Regex;
+use ebb_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
+use reqwest::StatusCode;
 
 #[derive(Debug, Clap)]
 struct Opts {
@@ -46,6 +51,17 @@ enum EnableDisableArgs {
     Endpoint(EndpointDns),
 }
 
+impl Display for EnableDisableArgs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            EnableDisableArgs::Ssh => "Ssh".to_owned(),
+            EnableDisableArgs::AllEndpoints => "All Endpoints".to_owned(),
+            EnableDisableArgs::Endpoint(s) => s.dns.to_owned(),
+        };
+        write!(f, "{}", str)
+    }
+}
+
 #[derive(Debug, Clap)]
 struct _InitArgs {
     /// Should SSH be enabled or disabled
@@ -69,6 +85,13 @@ struct EndpointArg {
 enum CliError {
     ConfigError(ConfigError),
     StdIoError(IoError),
+    Http(reqwest::Error),
+}
+
+impl From<reqwest::Error> for CliError {
+    fn from(v: reqwest::Error) -> Self {
+        CliError::Http(v)
+    }
 }
 
 impl From<IoError> for CliError {
@@ -86,11 +109,10 @@ impl From<ConfigError> for CliError {
 #[tokio::main]
 async fn main() {
     let opts: Opts = Opts::parse();
-    println!("Hey, not sleeping done now bye\n{:#?}", opts);
 
     let result: Result<(), CliError> = match opts.subcmd {
-        SubCommand::Enable(args) => enabledisable(true, args).await.into(),
-        SubCommand::Disable(args) => enabledisable(false, args).await.into(),
+        SubCommand::Enable(args) => handle_enable_disable_ret(&args, enabledisable(true, &args).await),
+        SubCommand::Disable(args) => handle_enable_disable_ret(&args, enabledisable(false, &args).await),
         SubCommand::Init => init().await,
     };
 
@@ -103,12 +125,30 @@ async fn main() {
                 ConfigError::Parsing => exiterror("Failed to parse configuration properly, please notify Ebbflow"),
                 ConfigError::Unknown(s) => exiterror(&format!("Unexpected error: {}, Please notify Ebbflow", s)),
             }
-            _ => todo!()
+            CliError::StdIoError(e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
+            CliError::Http(e) => exiterror(&format!("Problem making HTTP request to Ebbflow, please try again soon. For debugging: {:?}", e)),
         }
     }
 }
 
-fn exiterror(s: &str) {
+fn handle_enable_disable_ret(args: &EnableDisableArgs, ret: Result<bool, CliError>) -> Result<(), CliError> {
+    match ret {
+        Ok(b) => {
+            if b {
+                Ok(())
+            } else {
+                if let EnableDisableArgs::AllEndpoints = args {
+                    exiterror(&format!("Nothing to change, no endpoints are configured"));
+                } else {
+                    exiterror(&format!("The specified target does not exist: {}", args));
+                }
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn exiterror(s: &str) -> ! {
     eprintln!("ERROR: {}", s);
     std::process::exit(1);
 }
@@ -116,41 +156,59 @@ fn exiterror(s: &str) {
 // Uses AccountId, creates a key, then prompts for endpoint/port combos and if SSH should be enabled
 async fn init() -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
+    let mut hostname = hostname_or_die();
 
-    let mut yn = String::new();
-    println!("Would you like to have the SSH proxy enabled for this host? Please type 'yes', 'no', 'y', or 'n'");
+    println!("Would you like to have the SSH proxy enabled for this host? Please type yes, y, no, or n");
     let enablessh = loop {
+        let mut yn = String::new();
         io::stdin().read_line(&mut yn)?;
         match extract_yn(&yn) {
             Some(enabled) => break enabled,
             None => {}
         }
         println!("Could not parse {} into yes or no (or y or n), please retry", yn.trim());
-        yn = String::new();
     };
 
-    let mut account_id = String::new();
-    loop {
-        println!("Please enter your account id (viewable in the Ebbflow console)");
-        io::stdin().read_line(&mut account_id)?;
-        if account_id.len() > 10 || account_id.len() == 0 || account_id.is_empty() || !is_alphanumeric(&account_id) {
-            println!("The account id you entered ({}) does not seem correct, please enter again. AccountIds are short and alphanumeric, e.g. a1b2c3", account_id.trim());
-        } else {
-            break
+    if enablessh {
+        println!("The hostname {} will be used to identify this host in the ebbflow proxy\ne.g. Clients will execute `ssh -J ebbflow.io {}`, is that ok?", hostname, hostname);
+        if !loop {
+            let mut yn = String::new();
+            io::stdin().read_line(&mut yn)?;
+            match extract_yn(&yn) {
+                Some(yn) => break yn,
+                None => {}
+            }
+            println!("Could not parse {} into yes or no (or y or n), please retry", yn.trim());
+        } {
+            println!("What would you like the host to be identified as for SSH proxy?");
+            let r = Regex::new(r"^[-\.[:alnum:]]{1,220}$").unwrap();
+            loop {
+                let mut newhn = String::new();
+                io::stdin().read_line(&mut newhn)?;
+                let newhn = newhn.trim();
+                if !r.is_match(&newhn) {
+                    println!("The provided name does not appear to be a valid hostname. Must be alphanumeric and only have periods or dashes (-).");
+                } else {
+                    println!("The name {} will be used.", newhn);
+                    hostname = newhn.to_owned();
+                    break;
+                }
+            }
         }
-        account_id = String::new();
     }
-    let account_id = account_id.trim().to_string();
 
-    let (url, keyid, secret_stuff) = create_key_request(&account_id).await?;
+    let (url, finalizeme) = create_key_request(&hostname).await?;
     print_url_instructions(url);
 
-    let key = poll_key_creation(keyid, secret_stuff).await?;
+    let key = poll_key_creation(finalizeme).await?;
 
     println!("Great! The key has been provisioned.");
 
+    let mut ssh = Ssh::new(enablessh);
+    ssh.hostname_override = Some(hostname);
+
     let cfg = EbbflowDaemonConfig {
-        ssh: Ssh::new(enablessh),
+        ssh,
         endpoints: vec![],
         key,
     };
@@ -169,34 +227,63 @@ fn extract_yn(yn: &str) -> Option<bool> {
 }
 
 // Returns the String
-async fn poll_key_creation(keyid: String, secret_stuff: String) -> Result<String, CliError> {
-    Ok("ebb_hst_123412341".to_string())
-}
-
-
-fn print_url_instructions(url: String) {
-    println!("Please go to {} to initialize the secret key for this host", url);
-}
-
-fn is_alphanumeric(s: &str) -> bool {
-    for c in s.trim().chars() {
-        if !c.is_ascii_alphanumeric() {
-            return false
+async fn poll_key_creation(finalizeme: HostKeyInitFinalizationContext) -> Result<String, CliError> {
+    print!("Waiting for key creation to be completed");
+    let client = reqwest::Client::new();
+    loop {
+        tokio::time::delay_for(Duration::from_secs(5)).await;
+        match client.post(&format!("https://api.preview.ebbflow.io:4443/v1/hostkeyinit/{}", finalizeme.id))
+        .json(&finalizeme)
+        .send()
+        .await {
+            Ok(response) => {
+                match response.status() {
+                    StatusCode::OK => {
+                        use std::io::Write;
+                        print!("\n");
+                        let _ = std::io::stdout().flush();
+                        let keydata: KeyData = response.json().await?;
+                        return Ok(keydata.key);
+                    },
+                    StatusCode::ACCEPTED => {
+                        use std::io::Write;
+                        print!(".");
+                        let _ = std::io::stdout().flush();
+                    }
+                    StatusCode::NOT_FOUND => {}
+                    _ => println!("Unexpected status code from Ebbflow, weird! {}", response.status()),
+                    
+                }
+            },
+            Err(e) =>  println!("Error polling key creation, will just retry. For debugging: {:?}", e),
         }
     }
-    true
 }
 
-// Gets a URL to display, and then the ID that will be used to poll with
-async fn create_key_request(account_id: &str) -> Result<(String, String, String), CliError> {
-    Ok(("https://ebbflow.io/init/a9di1nck13".to_string(), "a9di1nck13".to_string(), "secret_stuff".to_string()))
+fn print_url_instructions(url: String) {
+    println!("Please go to {} to initialize the secret key for this host\n", url);
+}
+
+// Gets a URL to display, and then the ID that will be used to poll with, and the secret to use when polling
+async fn create_key_request(hostname: &str) -> Result<(String, HostKeyInitFinalizationContext), CliError> {
+    let init = HostKeyInitContext::new(hostname.to_string());
+
+    let client = reqwest::Client::new();
+    let finalizeme: HostKeyInitFinalizationContext = client.post("https://api.preview.ebbflow.io:4443/v1/hostkeyinit")
+        .json(&init)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    Ok((format!("https://ebbflow.io/init/{}", finalizeme.id), finalizeme))
 }
 
 // init
 // status (endpoints and ssh)
 // get config file loc
 
-async fn enabledisable(enable: bool, args: EnableDisableArgs) -> Result<(), CliError> {
+async fn enabledisable(enable: bool, args: &EnableDisableArgs) -> Result<bool, CliError> {
     match args {
         EnableDisableArgs::Ssh => set_ssh_enabled(enable).await,
         EnableDisableArgs::AllEndpoints => set_endpoint_enabled(enable, None).await,
@@ -231,33 +318,30 @@ async fn finish_init(
     cfg.save_to_file().await
 }
 
-async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(), CliError> {
+async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<bool, CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
 
+    let mut targeted_found = false;
     for e in existing.endpoints.iter_mut() {
         if let Some(actualdns) = dns {
             if actualdns == &e.dns {
                 e.enabled = enabled;
+                targeted_found = true;
             }
         } else {
+            targeted_found = true;
             e.enabled = enabled;
         }
     }
 
     existing.save_to_file().await?;
 
-    Ok(())
+    Ok(targeted_found)
 }
 
-async fn set_ssh_enabled(enabled: bool) -> Result<(), CliError> {
+async fn set_ssh_enabled(enabled: bool) -> Result<bool, CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
     existing.ssh.enabled = enabled;
     existing.save_to_file().await?;
-    Ok(())
-}
-
-async fn set_all_enabled(enabled: bool) -> Result<(), CliError> {
-    set_endpoint_enabled(enabled, None).await?;
-    set_ssh_enabled(enabled).await?;
-    Ok(())
+    Ok(true)
 }

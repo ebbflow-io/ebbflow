@@ -377,3 +377,23 @@ where
 
     runnerc
 }
+
+pub fn hostname_or_die() -> String {
+    match hostname::get() {
+        Ok(s) => {
+            match s.to_str() {
+                Some(s) => s.to_string(),
+                None => {
+                    eprintln!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
+                    error!("Error retrieving the hostname from the OS, could not turn {:?} into String", s);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error retrieving the hostname from the OS {:?}", e);
+            error!("Error retrieving the hostname from the OS {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
