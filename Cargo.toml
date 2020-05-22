@@ -45,6 +45,10 @@ ebbflow-api = { git = "https://github.com/ebbflow-io/ebbflow-api" }
 #ebbflow-api = { path = "../ebb-api" }
 regex = "1.3"
 
+[target.'cfg(windows)'.dependencies]
+windows-service = { git = "https://github.com/mullvad/windows-service-rs" }
+winlog = { version = "0.2.5", features = ["env_logger"] }
+
 [dev-dependencies]
 hyper = "0.13"
 hostname = "0.3"

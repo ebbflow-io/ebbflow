@@ -11,6 +11,127 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
+#[cfg(windows)]
+#[macro_use]
+extern crate windows_service;
+
+#[cfg(windows)]
+fn main() {
+    println!("hi");
+    windows::run();
+    //realmain().await;
+}
+
+#[cfg(windows)]
+mod windows {
+
+    use std::{
+        ffi::OsString,
+        sync::mpsc,
+        time::Duration,
+    };
+    use windows_service::{
+        define_windows_service,
+        service::{
+            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+            ServiceType,
+        },
+        service_control_handler::{self, ServiceControlHandlerResult},
+        service_dispatcher, Result,
+    };
+
+    const SERVICE_NAME: &str = "ebbflowClientService";
+    const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
+
+    pub fn run() -> Result<()> {
+        winlog::try_register("Ebbflow Service Log").unwrap();
+
+        // Register generated `ffi_service_main` with the system and start the service, blocking
+        // this thread until the service is stopped.
+        service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+    }
+
+    // Generate the windows service boilerplate.
+    // The boilerplate contains the low-level service entry function (ffi_service_main) that parses
+    // incoming service arguments into Vec<OsString> and passes them to user defined service
+    // entry (my_service_main).
+    define_windows_service!(ffi_service_main, my_service_main);
+
+    pub fn my_service_main(_arguments: Vec<OsString>) {
+        if let Err(_e) = run_service() {
+            // Handle the error, by logging or something.
+        }
+    }
+
+    pub fn run_service() -> Result<()> {
+        std::env::set_var("RUST_LOG", "INFO");
+        winlog::init("Ebbflow Service Log").unwrap();
+        info!("Hello, Event Log");
+        // Create a channel to be able to poll a stop event from the service worker loop.
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        // Define system service event handler that will be receiving service events.
+        let event_handler = move |control_event| -> ServiceControlHandlerResult {
+            match control_event {
+                // Notifies a service to report its current status information to the service
+                // control manager. Always return NoError even if not implemented.
+                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+
+                // Handle stop
+                ServiceControl::Stop => {
+                    shutdown_tx.send(()).unwrap();
+                    ServiceControlHandlerResult::NoError
+                }
+
+                _ => ServiceControlHandlerResult::NotImplemented,
+            }
+        };
+
+        // Register system service event handler.
+        // The returned status handle should be used to report service status changes to the system.
+        let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
+
+        // Tell the system that service is running
+        status_handle.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::from_secs(60),
+            process_id: None,
+        })?;
+
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(super::realmain());
+
+        // loop {
+        //     // Poll shutdown event.
+        //     match shutdown_rx.recv_timeout(Duration::from_secs(1)) {
+        //         // Break the loop either upon stop or channel disconnect
+        //         Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+
+        //         // Continue work if no events were received within the timeout
+        //         Err(mpsc::RecvTimeoutError::Timeout) => (),
+        //     };
+        // }
+
+        // Tell the system that service has stopped.
+        status_handle.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        })?;
+
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
 #[tokio::main]
 async fn main() {
     env_logger::builder()
@@ -18,6 +139,19 @@ async fn main() {
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 
+    realmain().await;
+}
+
+async fn _test_poop() {
+    loop {
+        tokio::time::delay_for(Duration::from_secs(3)).await;
+        warn!("poop");
+        error!("pooerrp");
+        info!("poopinf");
+    }
+}
+
+async fn realmain() {
     // TODO: see if there is an override so if this fails we are still ok?
     let roots = match load_roots() {
         Some(r) => r,
@@ -55,8 +189,8 @@ async fn main() {
 
     // We only care about mutations
     if let Err(e) = watcher.configure(Config::PreciseEvents(true)) {
-        eprintln!("Unable to set file event configuration options {:?}", e);
-        error!("Unable to set file event configuration options {:?}", e);
+        eprintln!("Unable to set file event configuration options (precise) {:?}", e);
+        error!("Unable to set file event configuration options (precise) {:?}", e);
         std::process::exit(1);
     }
 

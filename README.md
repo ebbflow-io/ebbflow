@@ -57,6 +57,11 @@ cargo deb
 cargo rpm build
 ```
 
+- Install `cargo-wix`: https://crates.io/crates/cargo-wix
+```
+cargo wix
+```
+
 ## Contributing
 
 TODO
