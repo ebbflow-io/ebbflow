@@ -29,13 +29,15 @@
   <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
 <?endif ?>
 
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
 
     <Product
         Id='*'
         Name='ebbflow'
         UpgradeCode='97AD6159-8342-4BEE-8A62-9644264586A1'
-        Manufacturer='Ryan Gorup'
+        Manufacturer='Ebbflow.io'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
@@ -53,6 +55,10 @@
             SummaryCodepage='1252'
             Platform='$(var.Platform)'/>
 
+        <!-- <InstallExecuteSequence>
+
+        </InstallExecuteSequence> -->
+
         <MajorUpgrade
             Schedule='afterInstallInitialize'
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
@@ -63,13 +69,6 @@
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='ebbflow'>
-                    <Component Id="conf.yaml" Guid='*' NeverOverwrite='yes'  Win64='$(var.Win64)'>
-                      <File Id="ConfigFile"
-                        Name="config.yaml"
-                        Source='assets\empty.conf.yaml'
-                        DiskId='1'
-                        KeyPath='yes'/>
-                    </Component>
                     <!--
                       Disabling the license sidecar file in the installer is a two step process:
 
@@ -84,7 +83,16 @@
                             Source='LICENSE'
                             KeyPath='yes'/>
                     </Component>
-
+                    <Component Id="conf.yaml" Guid="cc509cb7-c1a1-46cf-8c62-7cbb0017783c" Win64='$(var.Win64)' NeverOverwrite='yes'>
+                      <File Id="ConfigFile"
+                        Name="config.yaml"
+                        Source='assets\empty.conf.yaml'
+                        KeyPath='yes'
+                        DiskId='1'>
+                        <Permission User="Everyone" GenericAll="no" />
+                        <Permission User="Administrators" GenericAll="yes" />
+                      </File>
+                    </Component>
                     <Component Id='EbbflowClientService' Guid='*' Win64='$(var.Win64)'>
                       <File
                           Id='exe1'
@@ -100,19 +108,32 @@
                         DisplayName="Ebbflow Client Service"
                         ErrorControl="normal"
                         LoadOrderGroup="NetworkProvider"
-                        Name="ebbflowClientService"
+                        Name="ebbflowClientService2"
                         Start="auto"
                         Type="ownProcess"
-                        Vital="yes" 
+                        Vital="yes">
+                        <util:PermissionEx User="Everyone" 
+                            ServiceChangeConfig="no"
+                            ServiceEnumerateDependents="no"
+                            ChangePermission="no"
+                            ServiceInterrogate="no"
+                            ServicePauseContinue="no"
+                            ServiceQueryConfig="yes"
+                            ServiceQueryStatus="yes"
+                            ServiceStart="no"
+                            ServiceStop="no"
                         />
-                      <ServiceControl
-                        Id="ServiceControl"
-                        Name="ebbflowClientService"
-                        Start="install"
-                        Stop="both"
-                        Wait="yes"
-                        Remove="uninstall"
-                      />
+                        <util:PermissionEx User="Administrators" GenericAll="yes" />
+                      </ServiceInstall>
+                    <ServiceControl Id="ServiceControl_Start"
+                                    Name="ebbflowClientService2"
+                                    Start="install"
+                                    Wait="no" />
+                    <ServiceControl Id="ServiceControl_Stop"
+                                    Name="ebbflowClientService2"
+                                    Stop="both"
+                                    Remove="uninstall"
+                                    Wait="yes" />
                     </Component>
 
                     <Directory Id='Bin' Name='bin'>
@@ -168,8 +189,7 @@
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
-
-        
+        <SetProperty Id="ProgramFilesFolder" Value="[LocalAppDataFolder]" Before="CostFinalize" />
         <!--
           Uncomment the following `Icon` and `Property` tags to change the product icon.
 
@@ -181,10 +201,11 @@
 
         <Property Id='ARPHELPLINK' Value='https://ebbflow.io'/>
         
-        <UI>
+        <UIRef Id="WixUI_Minimal" />
+        <!-- <UI>
             <UIRef Id='WixUI_FeatureTree'/>
             
-            <!--
+            <!-
               Enabling the EULA dialog in the installer is a three step process:
 
                 1. Comment out or remove the two `Publish` tags that follow the
@@ -193,11 +214,11 @@
                 3. Replace the `Value` attribute of the `WixVariable` tag with
                    the path to a RTF file that will be used as the EULA and
                    displayed in the license agreement dialog.
-            -->
+            ->
             <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
             <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
 
-        </UI>
+        </UI> -->
 
         
         <!--
@@ -230,5 +251,4 @@
         <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
 
     </Product>
-
 </Wix>

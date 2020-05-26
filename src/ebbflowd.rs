@@ -10,26 +10,21 @@ use rustls::RootCertStore;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
-
-#[cfg(windows)]
-#[macro_use]
-extern crate windows_service;
+use ebbflow::signal::SignalReceiver;
 
 #[cfg(windows)]
 fn main() {
     println!("hi");
-    windows::run();
-    //realmain().await;
+    let _ = windows::run();
 }
 
 #[cfg(windows)]
 mod windows {
-
     use std::{
         ffi::OsString,
-        sync::mpsc,
         time::Duration,
     };
+    use ebbflow::signal::SignalSender;
     use windows_service::{
         define_windows_service,
         service::{
@@ -40,7 +35,7 @@ mod windows {
         service_dispatcher, Result,
     };
 
-    const SERVICE_NAME: &str = "ebbflowClientService";
+    const SERVICE_NAME: &str = "ebbflowClientService2";
     const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
     pub fn run() -> Result<()> {
@@ -64,11 +59,13 @@ mod windows {
     }
 
     pub fn run_service() -> Result<()> {
-        std::env::set_var("RUST_LOG", "INFO");
+        std::env::set_var("RUST_LOG", "DEBUG");
         winlog::init("Ebbflow Service Log").unwrap();
         info!("Hello, Event Log");
+        info!("Hello, Event Log NEW ONE II");
         // Create a channel to be able to poll a stop event from the service worker loop.
-        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        let sender = SignalSender::new();
+        let r = sender.new_receiver();
 
         // Define system service event handler that will be receiving service events.
         let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -79,7 +76,7 @@ mod windows {
 
                 // Handle stop
                 ServiceControl::Stop => {
-                    shutdown_tx.send(()).unwrap();
+                    sender.send_signal();
                     ServiceControlHandlerResult::NoError
                 }
 
@@ -103,7 +100,18 @@ mod windows {
         })?;
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(super::realmain());
+        let existcode = rt.block_on(async move {
+            match super::realmain(r).await {
+                Ok(()) => {
+                    info!("Daemon shutting down");
+                    0
+                }
+                Err(e) => {
+                    error!("Error in daemon {}", e);
+                    1
+                }
+            }
+        });
 
         // loop {
         //     // Poll shutdown event.
@@ -121,7 +129,7 @@ mod windows {
             service_type: SERVICE_TYPE,
             current_state: ServiceState::Stopped,
             controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code: ServiceExitCode::Win32(existcode),
             checkpoint: 0,
             wait_hint: Duration::default(),
             process_id: None,
@@ -139,7 +147,10 @@ async fn main() {
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 
-    realmain().await;
+    let sender = SignalSender::new();
+    let r = sender.new_receiver();
+
+    realmain(r).await;
 }
 
 async fn _test_poop() {
@@ -151,21 +162,18 @@ async fn _test_poop() {
     }
 }
 
-async fn realmain() {
+async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
     // TODO: see if there is an override so if this fails we are still ok?
     let roots = match load_roots() {
         Some(r) => r,
-        None => {
-            eprintln!("Error loading trusted certificates");
-            error!("Error loading trusted certificates");
-            std::process::exit(1);
-        }
+        None => return Err("Error loading trusted certificates from OS".to_string()),
     };
+
+    error!("cfg full: {}", ebbflow::config_file_full());
 
     let notify = Arc::new(Notify::new());
     let notifyc = notify.clone();
-    let mut watcher: RecommendedWatcher =
-        Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
+    let mut watcher: RecommendedWatcher = match Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
             trace!("Received a notification");
             match res {
                 Ok(event) => match event.kind {
@@ -184,32 +192,32 @@ async fn realmain() {
                     panic!("Error listening for file events {:?}", e);
                 }
             }
-        })
-        .expect("Unable to create file event listener");
+        }) {
+            Ok(x) => x,
+            Err(e) => return Err(format!("Error creating new file watcher {:?}", e)),
+        };
 
     // We only care about mutations
     if let Err(e) = watcher.configure(Config::PreciseEvents(true)) {
-        eprintln!("Unable to set file event configuration options (precise) {:?}", e);
-        error!("Unable to set file event configuration options (precise) {:?}", e);
-        std::process::exit(1);
+        return Err(format!("Unable to set file event configuration options (precise) {:?}", e));
     }
 
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
-    if let Err(e) = watcher.watch(ebbflow::CONFIG_PATH, RecursiveMode::Recursive) {
-        eprintln!("Unable to set file event configuration options {:?}", e);
-        error!("Unable to set file event configuration options {:?}", e);
-        std::process::exit(1);
+    if let Err(e) = watcher.watch(ebbflow::config_path_root(), RecursiveMode::Recursive) {
+        return Err(format!("Unable to set file event configuration options {:?}", e));
     }
 
     let sharedinfo = Arc::new(
-        SharedInfo::new_with_ebbflow_overrides(
+        match SharedInfo::new_with_ebbflow_overrides(
             "127.0.0.1:7070".parse().unwrap(),
             "s.preview.ebbflow.io".to_string(),
             roots,
         )
-        .await
-        .unwrap(),
+        .await {
+            Ok(x) => x,
+            Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+        }
     );
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
@@ -221,7 +229,8 @@ async fn realmain() {
         }
     });
 
-    futures::future::pending::<()>().await;
+    wait.wait().await;
+    Ok(())
 }
 
 pub fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {

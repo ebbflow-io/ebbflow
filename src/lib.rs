@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate lazy_static;
 
 use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
@@ -18,8 +20,33 @@ use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
 /// Path to the Config file, see EbbflowDaemonConfig in the config module.
+#[cfg(linux)]
 pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
-pub const CONFIG_FILE: &str = "/etc/ebbflow/config.yaml"; // Linux
+#[cfg(macos)]
+pub const CONFIG_PATH: &str = "asdf";
+#[cfg(windows)]
+lazy_static! {
+    pub static ref CONFIG_PATH: String = {
+        //format!("{}\\ebbflow", dirs_next::cache_dir().unwrap().to_string_lossy())
+        "C:\\Program Files\\ebbflow".to_string()
+    };
+}
+
+pub fn config_path_root() -> String {
+    CONFIG_PATH.clone()
+}
+
+#[cfg(windows)]
+pub fn config_file_full() -> String {
+    format!("{}\\{}", config_path_root(), CONFIG_FILE)
+}
+
+#[cfg(not(windows))]
+pub fn config_file_full() -> String {
+    format!("{}/{}", config_path_root(), CONFIG_FILE)
+}
+
+pub const CONFIG_FILE: &str = "config.yaml";
 
 pub const MAX_MAX_IDLE: usize = 100;
 // const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);

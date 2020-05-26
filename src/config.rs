@@ -1,4 +1,4 @@
-use crate::CONFIG_FILE;
+use crate::config_file_full;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use tokio::fs;
@@ -42,12 +42,12 @@ impl EbbflowDaemonConfig {
         std.write(true).create(true);
         let options = TokioOpenOptions::from(std);
 
-        options.open(CONFIG_FILE).await?;
+        options.open(config_file_full()).await?;
         Ok(())
     }
 
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
-        let filebytes = fs::read(CONFIG_FILE).await?;
+        let filebytes = fs::read(config_file_full()).await?;
 
         let parsed: EbbflowDaemonConfig = match serde_yaml::from_slice(&filebytes[..]) {
             Ok(p) => p,
@@ -68,7 +68,7 @@ impl EbbflowDaemonConfig {
             }
         };
 
-        Ok(fs::write(CONFIG_FILE, b.as_bytes()).await?)
+        Ok(fs::write(config_file_full(), b.as_bytes()).await?)
     }
 }
 
@@ -84,8 +84,6 @@ pub struct Endpoint {
     pub maxconns: u16,
     /// the maxmimum amount of idle connections to Ebbflow, will be capped at X
     pub maxidle: u16,
-    // /// The address the application runs on locally, defaults to 127.0.0.1
-    // pub address: String,
     /// Is this endpoint enabled or disabled?
     pub enabled: bool,
 }
