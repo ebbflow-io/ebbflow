@@ -19,9 +19,13 @@ use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-/// Path to the Config file, see EbbflowDaemonConfig in the config module.
-#[cfg(linux)]
-pub const CONFIG_PATH: &str = "/etc/ebbflow/"; // Linux
+// Path to the Config file, see EbbflowDaemonConfig in the config module.
+#[cfg(target_os = "linux")]
+lazy_static! {
+    pub static ref CONFIG_PATH: String = {
+        "/etc/ebbflow".to_string()
+    };
+}
 #[cfg(macos)]
 pub const CONFIG_PATH: &str = "asdf";
 #[cfg(windows)]
@@ -33,7 +37,7 @@ lazy_static! {
 }
 
 pub fn config_path_root() -> String {
-    CONFIG_PATH.clone()
+    CONFIG_PATH.to_string()
 }
 
 #[cfg(windows)]
@@ -264,6 +268,9 @@ impl InnerDaemonRunner {
                 };
 
                 if ssh.is_none() || newconfig != ssh.as_ref().unwrap().existing_config {
+                    if let Some(instance) = ssh {
+                        instance.enabledisable.stop();
+                    }
                     let enabledisabled = if newconfig.enabled {
                         // start the new one and set it
                         let args = EndpointArgs {

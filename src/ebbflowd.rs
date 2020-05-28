@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 use ebbflow::signal::SignalReceiver;
+use ebbflow::signal::SignalSender;
 
 #[cfg(windows)]
 fn main() {
@@ -209,16 +210,24 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
     }
 
     let sharedinfo = Arc::new(
-        match SharedInfo::new_with_ebbflow_overrides(
-            "127.0.0.1:7070".parse().unwrap(),
-            "s.preview.ebbflow.io".to_string(),
-            roots,
-        )
+        match SharedInfo::new(roots)
         .await {
             Ok(x) => x,
             Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
         }
     );
+
+    // let sharedinfo = Arc::new(
+    //     match SharedInfo::new_with_ebbflow_overrides(
+    //         "127.0.0.1:7070".parse().unwrap(),
+    //         "s.preview.ebbflow.io".to_string(),
+    //         roots,
+    //     )
+    //     .await {
+    //         Ok(x) => x,
+    //         Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+    //     }
+    // );
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
 

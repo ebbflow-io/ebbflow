@@ -17,8 +17,8 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_rustls::TlsConnector;
 
-const EBBFLOW_DNS: &str = "s.preview.ebbflow.io"; // TODO obvi, lets use use a trusted cert
-const EBBFLOW_PORT: u16 = 7070;
+const EBBFLOW_DNS: &str = "s.ebbflow.io";
+const EBBFLOW_PORT: u16 = 443;
 
 pub struct SharedInfo {
     dns: DnsResolver,
@@ -86,7 +86,12 @@ impl SharedInfo {
             .dns
             .ips(EBBFLOW_DNS)
             .await
-            .unwrap_or_else(|_| Vec::new()); // TODO: Return fallback IPs here
+            .unwrap_or_else(|_| {
+                vec![
+                    "75.2.123.22".parse().unwrap(),
+                    "99.83.172.111".parse().unwrap(),
+                ]
+            }); // TODO: Update fallbacks
 
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);

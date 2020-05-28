@@ -282,6 +282,116 @@ mod basic_tests_v0 {
         assert_eq!(readme[..], writeme[..]);
     }
 
+
+    #[tokio::test]
+    async fn ssh_start_enabled_disable_reenable() {
+        logger();
+
+        let testclientport = 49143;
+        let customerport = 49144;
+        let serverport = 49145;
+
+        tokio::spawn(listen_and_process(customerport, testclientport));
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned ebb");
+
+        let hostname = "asdf31".to_string();
+        let mut cfg = EbbflowDaemonConfig {
+            key: "asdf".to_string(),
+            endpoints: vec![],
+            ssh: Some(Ssh {
+                port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
+                hostname: hostname,
+                enabled: true,
+                maxconns: 100,
+                maxidle: 2,
+            }),
+        };
+
+        let (notify, arcmutex, _) =
+            start_basic_daemon(testclientport, cfg.clone()).await;
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned daemon");
+
+        let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport as usize));
+        info!("Spawned server");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
+        info!("Connected I");
+
+        let mut server = serverconnhandle.await.unwrap().unwrap();
+
+        // at this point, we have the customer conn and server conn, let's send some bytes.
+        let writeme: [u8; 102] = [1; 102];
+        customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff I");
+
+        let mut readme: [u8; 102] = [0; 102];
+        server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff I");
+
+        assert_eq!(readme[..], writeme[..]);
+        let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport as usize));
+
+        // Now we shut it off and assume we cannot connect
+        cfg.ssh.as_mut().unwrap().enabled = false;
+        {
+            let mut x = arcmutex.lock().await;
+            *x = cfg.clone();
+        }
+        notify.notify();
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY * 2).await;
+
+        // we have something ready
+        // We should not be able to connect
+        let should_err = {
+            match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {
+                Ok(mut s) => {
+                    info!("Connected Client II");
+                    tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+                    // We should be disconnected soon, or not be able to write
+                    let _r = s.write(&[0; 4][..]).await;
+                    info!("Wrote Customer Stuff II");
+                    let mut buf = vec![0; 10];
+                    let r = s.read(&mut buf[..]).await;
+                    info!("Read Customer Stuff II {:?}", r);
+                    if let Ok(0) = r {
+                        Err(std::io::Error::from(std::io::ErrorKind::NotConnected))
+                    } else {
+                        r
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        };
+        assert!(should_err.is_err());
+
+        cfg.ssh.as_mut().unwrap().enabled = true;
+        {
+            let mut x = arcmutex.lock().await;
+            *x = cfg;
+        }
+        notify.notify();
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY * 2).await;
+
+        // at this point, we have the customer conn and server conn, let's send some bytes.
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
+        info!("Connected Client III");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        let mut server = serverconnhandle.await.unwrap().unwrap(); // we spawned ONE Accept thing earlier, it should have NOT resolved and only NOW resolves once we connect again
+        let writeme: [u8; 10212] = [5; 10212];
+        customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff III");
+        let mut readme: [u8; 10212] = [0; 10212];
+        server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff III");
+        assert_eq!(readme[..], writeme[..]);
+    }
+
     #[tokio::test]
     async fn just_status_check() {
         let testclientport = 49155;
