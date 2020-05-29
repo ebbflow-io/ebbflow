@@ -6,14 +6,25 @@
 trigger:
 - master
 
-pool:
-  vmImage: 'ubuntu-latest'
-
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
-
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+stages:
+- stage: Build, Test, Validate
+  pool:
+    vmImage: 'ubuntu-latest'
+  jobs:
+  - job:
+    steps:
+    - bash: echo "Hello world"
+      displayName: 'Run a one-line script'
+    - bash: echo "Hello world II"
+      displayName: 'Run do something else'
+      
+- stage: Build Packages
+  pool:
+    vmImage: 'ubuntu-latest'
+  jobs:
+  - job:
+    steps:
+    - bash: echo "Hello world"
+      displayName: 'Run a one-line script'
+    - bash: echo "Hello world II"
+      displayName: 'Run do something else'
