@@ -6,40 +6,26 @@
 trigger:
 - azure-pipelines-testing
 
-stages:
-- stage: BuildTestValidate
-  jobs:
-  - job:
-    strategy:
-      matrix:
-        windows-stable:
-          imageName: 'vs2017-win2016'
-          rustup_toolchain: stable
-        mac-stable:
-          imageName: 'macos-10.13'
-          rustup_toolchain: stable
-        linux-stable:
-          imageName: 'ubuntu-16.04'
-          rustup_toolchain: stable
-    pool:
-      vmImage: $(imageName)
-    steps:
-      - script: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUSTUP_TOOLCHAIN
-          echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
-        displayName: Install rust
-        condition: ne( variables['Agent.OS'], 'Windows_NT' )
-      - script: |
-          curl -sSf -o rustup-init.exe https://win.rustup.rs
-          rustup-init.exe -y --default-toolchain %RUSTUP_TOOLCHAIN%
-          echo "##vso[task.setvariable variable=PATH;]%PATH%;%USERPROFILE%\.cargo\bin"
-        displayName: Windows install rust
-        condition: eq( variables['Agent.OS'], 'Windows_NT' )
-      - script: cargo build --all
-        displayName: Cargo build
-      - script: cargo test --all
-        displayName: Cargo test
+resources:
+  repositories:
+    - repository: rust_pipelines
+      type: github
+      name: xoac/rust-azure-pipelines
+      # ref: refs/heads/master ## TODO you may want to change it to refs/tags/TAG_NAME.
+      ref: refs/tags/v0.1.0
+      endpoint: ebbflow-test
 
+stages:
+- stage: InitialCheck
+  displayName: "Quick checks"
+  jobs:
+  - template: ci/scenarios/check.yml@rust_pipelines
+- stage: MultiOsChecks
+  displayName: "Multi OS native tests"
+  jobs:
+  - template: ci/scenarios/test.yml@rust_pipelines
+    parameters:
+      min_rust_supported: 1.31  # Use first rust version you wanna support
 - stage: BuildPackages
   pool:
     vmImage: 'ubuntu-latest'
