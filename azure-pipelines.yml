@@ -7,7 +7,7 @@ trigger:
 - azure-pipelines-testing
 
 stages:
-- stage: Build, Test, Validate
+- stage: BuildTestValidate
   pool:
     vmImage: 'ubuntu-latest'
   jobs:
@@ -18,7 +18,7 @@ stages:
     - bash: echo "Hello world II"
       displayName: 'Run do something else'
       
-- stage: Build Packages
+- stage: BuildPackages
   pool:
     vmImage: 'ubuntu-latest'
   jobs:
