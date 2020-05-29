@@ -57,7 +57,7 @@ impl SharedInfo {
         Ok(Self {
             dns: DnsResolver::new().await?,
             key: Mutex::new(None),
-            roots: roots,
+            roots,
             hardcoded_ebbflow_addr: overriddenmaybe,
             hardcoded_ebbflow_dns: overridedns,
         })

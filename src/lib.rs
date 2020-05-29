@@ -370,9 +370,8 @@ pub async fn run_daemon(
             trace!("Got a notification");
         }
     });
-    let runnerc = runner.clone();
 
-    runnerc
+    runner
 }
 
 pub fn hostname_or_die() -> String {
