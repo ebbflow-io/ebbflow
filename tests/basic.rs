@@ -282,14 +282,12 @@ mod basic_tests_v0 {
         assert_eq!(readme[..], writeme[..]);
     }
 
-
     #[tokio::test]
     async fn ssh_start_enabled_disable_reenable() {
-        logger();
-
-        let testclientport = 49143;
-        let customerport = 49144;
-        let serverport = 49145;
+        // logger();
+        let testclientport = 43143;
+        let customerport = 43144;
+        let serverport = 43145;
 
         tokio::spawn(listen_and_process(customerport, testclientport));
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
@@ -308,8 +306,7 @@ mod basic_tests_v0 {
             }),
         };
 
-        let (notify, arcmutex, _) =
-            start_basic_daemon(testclientport, cfg.clone()).await;
+        let (notify, arcmutex, _) = start_basic_daemon(testclientport, cfg.clone()).await;
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
@@ -498,7 +495,7 @@ mod basic_tests_v0 {
         let nc = Arc::new(Notify::new());
         let n = nc.clone();
 
-        let m = run_daemon(Arc::new(info), f, dummyroot, n.clone()).await;
+        let m = run_daemon(Arc::new(info), f, n.clone()).await;
 
         (nc, am, m)
     }
@@ -540,9 +537,5 @@ mod basic_tests_v0 {
                 Box::pin(async move { Ok(cc.lock().await.clone()) })
             }),
         )
-    }
-
-    fn dummyroot() -> Option<rustls::RootCertStore> {
-        None
     }
 }

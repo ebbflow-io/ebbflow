@@ -8,13 +8,11 @@ use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
 use futures::future::BoxFuture;
-use rustls::RootCertStore;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
-use std::time::Duration;
 use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
@@ -22,9 +20,7 @@ use tokio::sync::Notify;
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
 lazy_static! {
-    pub static ref CONFIG_PATH: String = {
-        "/etc/ebbflow".to_string()
-    };
+    pub static ref CONFIG_PATH: String = { "/etc/ebbflow".to_string() };
 }
 #[cfg(macos)]
 pub const CONFIG_PATH: &str = "asdf";
@@ -51,11 +47,9 @@ pub fn config_file_full() -> String {
 }
 
 pub const CONFIG_FILE: &str = "config.yaml";
-
 pub const MAX_MAX_IDLE: usize = 100;
-// const LOAD_CFG_TIMEOUT: Duration = Duration::from_secs(3);
-const LOAD_ROOTS_DELAY: Duration = Duration::from_secs(60 * 60 * 36); // very rare
 
+pub mod certs;
 pub mod config;
 pub mod daemon;
 pub mod dns;
@@ -148,11 +142,6 @@ impl DaemonRunner {
     pub async fn update_config(&self, config: EbbflowDaemonConfig) {
         let mut inner = self.inner.lock().await;
         inner.update_config(config).await;
-    }
-
-    pub async fn update_roots(&self, roots: RootCertStore) {
-        let inner = self.inner.lock().await;
-        inner.update_roots(roots);
     }
 
     pub async fn status(&self) -> DaemonStatus {
@@ -256,7 +245,7 @@ impl InnerDaemonRunner {
                 }
             }
         }
-        
+
         match (config.ssh, &mut self.ssh) {
             (Some(newcfg), ssh) => {
                 let newconfig = SshConfiguration {
@@ -278,7 +267,10 @@ impl InnerDaemonRunner {
                             idleconns: newconfig.maxidle,
                             maxconns: newconfig.max,
                             endpoint: newconfig.hostname.clone(),
-                            local_addr: SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), newconfig.port),
+                            local_addr: SocketAddrV4::new(
+                                Ipv4Addr::new(127, 0, 0, 1),
+                                newconfig.port,
+                            ),
                         };
 
                         let meta = spawn_endpoint(self.info.clone(), args).await;
@@ -300,10 +292,6 @@ impl InnerDaemonRunner {
             }
             (None, None) => {}
         }
-    }
-
-    pub fn update_roots(&self, roots: RootCertStore) {
-        self.info.update_roots(roots);
     }
 
     pub fn status(&self) -> DaemonStatus {
@@ -348,7 +336,7 @@ pub async fn spawn_endpointasdfsfa(
     spawn_endpoint(info, args).await
 }
 
-pub async fn run_daemon<ROOTR>(
+pub async fn run_daemon(
     info: Arc<SharedInfo>,
     cfg_reload: Pin<
         Box<
@@ -358,13 +346,8 @@ pub async fn run_daemon<ROOTR>(
                 + 'static,
         >,
     >,
-    root_reload: ROOTR,
     cfg_notifier: Arc<Notify>,
-) -> Arc<DaemonRunner>
-where
-    //CFGR: Pin<Box<dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>>>,
-    ROOTR: Fn() -> Option<RootCertStore> + Sync + Send + 'static,
-{
+) -> Arc<DaemonRunner> {
     let runner = Arc::new(DaemonRunner::new(info));
     let runnerc = runner.clone();
 
@@ -388,17 +371,6 @@ where
         }
     });
     let runnerc = runner.clone();
-
-    tokio::spawn(Box::pin(async move {
-        loop {
-            tokio::time::delay_for(LOAD_ROOTS_DELAY).await;
-            if let Some(newroots) = root_reload() {
-                runner.update_roots(newroots).await;
-            } else {
-                warn!("Was unable to load new root certificates from OS, will continue to use existing set.");
-            }
-        }
-    }));
 
     runnerc
 }

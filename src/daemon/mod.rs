@@ -2,7 +2,10 @@ pub mod connection;
 
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
 use crate::dns::DnsResolver;
-use crate::signal::{SignalReceiver, SignalSender};
+use crate::{
+    certs::ROOTS,
+    signal::{SignalReceiver, SignalSender},
+};
 use futures::future::select;
 use futures::future::Either;
 use parking_lot::Mutex;
@@ -23,14 +26,14 @@ const EBBFLOW_PORT: u16 = 443;
 pub struct SharedInfo {
     dns: DnsResolver,
     key: Mutex<Option<String>>,
-    roots: Mutex<RootCertStore>,
+    roots: RootCertStore,
     hardcoded_ebbflow_addr: Option<SocketAddrV4>,
     hardcoded_ebbflow_dns: Option<String>,
 }
 
 impl SharedInfo {
-    pub async fn new(roots: RootCertStore) -> Result<Self, ()> {
-        Self::innernew(None, None, roots).await
+    pub async fn new() -> Result<Self, ()> {
+        Self::innernew(None, None, ROOTS.clone()).await
     }
 
     pub async fn new_with_ebbflow_overrides(
@@ -54,7 +57,7 @@ impl SharedInfo {
         Ok(Self {
             dns: DnsResolver::new().await?,
             key: Mutex::new(None),
-            roots: Mutex::new(roots),
+            roots: roots,
             hardcoded_ebbflow_addr: overriddenmaybe,
             hardcoded_ebbflow_dns: overridedns,
         })
@@ -70,28 +73,19 @@ impl SharedInfo {
     }
 
     pub fn roots(&self) -> RootCertStore {
-        self.roots.lock().clone()
-    }
-
-    pub fn update_roots(&self, newroots: RootCertStore) {
-        let mut roots = self.roots.lock();
-        *roots = newroots;
+        self.roots.clone()
     }
 
     pub async fn ebbflow_addr(&self) -> SocketAddrV4 {
         if let Some(overridden) = self.hardcoded_ebbflow_addr {
             return overridden.clone();
         }
-        let ips = self
-            .dns
-            .ips(EBBFLOW_DNS)
-            .await
-            .unwrap_or_else(|_| {
-                vec![
-                    "75.2.123.22".parse().unwrap(),
-                    "99.83.172.111".parse().unwrap(),
-                ]
-            }); // TODO: Update fallbacks
+        let ips = self.dns.ips(EBBFLOW_DNS).await.unwrap_or_else(|_| {
+            vec![
+                "75.2.123.22".parse().unwrap(),
+                "99.83.172.111".parse().unwrap(),
+            ]
+        }); // TODO: Update fallbacks
 
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);

@@ -1,6 +1,6 @@
 [package]
 name = "ebbflow"
-version = "0.5.7"
+version = "0.5.13"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"
@@ -33,7 +33,6 @@ tokio = { version = "0.2", features = ["full"] }
 tokio-rustls = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11.1"
-rustls-native-certs = "0.3.0"
 webpki = "0.21"
 trust-dns-resolver = "0.19.5"
 parking_lot = "0.10"
@@ -45,7 +44,6 @@ ebbflow-api = { git = "https://github.com/ebbflow-io/ebbflow-api" }
 #ebbflow-api = { path = "../ebb-api" }
 regex = "1.3"
 lazy_static = "1.4"
-dirs-next = "1.0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = { git = "https://github.com/mullvad/windows-service-rs" }
@@ -55,6 +53,10 @@ winlog = { version = "0.2.5", features = ["env_logger"] }
 hyper = "0.13"
 hostname = "0.3"
 
+
+###
+### .deb package related!
+###
 [package.metadata.deb]
 name = "ebbflow"
 extended-description = """\
@@ -66,21 +68,15 @@ conf-files = ["/etc/ebbflow/config.yaml"]
 maintainer-scripts="assets/debian"
 assets = [
     ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],
-    ["assets/empty.conf.yaml", "/etc/ebbflow/config.yaml", "600"],
+    ["assets/empty.config.yaml", "/etc/ebbflow/config.yaml", "600"],
     ["target/release/ebbflow", "/usr/bin/", "755"],
     ["target/release/ebbflowd", "/usr/sbin/", "755"]
 ]
 
-#[package.metadata.rpm.cargo]
-#buildflags = ["--release"]
 
-#[package.metadata.rpm.targets]
-#ebbflow = { path = "/usr/bin/ebbflow" }
-#ebbflowd = { path = "/usr/sbin/ebbflowd" }
-
-#[package.metadata.rpm.files]
-#'ebbflowd.service' = { path = "/ebbflowd.service" }
-
+###
+### RPM Build related!
+###
 [package.metadata.rpm.cargo]
 buildflags = ["--release"]
 target = "x86_64-unknown-linux-musl"
@@ -90,4 +86,5 @@ ebbflow = { path = "/usr/bin/ebbflow" }
 ebbflowd = { path = "/usr/sbin/ebbflowd" }
 
 [package.metadata.rpm.files]
-"ebbflowd.service" = { path = "/usr/lib/systemd/system/ebbflowd.service" }
+"ebbflowd.service" = { path = "/usr/lib/systemd/system/ebbflowd.service", mode = "644" }
+"empty.config.yaml" = { path = "/etc/ebbflow/config.yaml", mode = "600" }

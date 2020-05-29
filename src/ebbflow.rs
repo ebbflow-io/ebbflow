@@ -1,7 +1,7 @@
 use clap::Clap;
-use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::hostname_or_die;
+use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use regex::Regex;
 use reqwest::StatusCode;
 use std::io;
@@ -70,7 +70,7 @@ struct AddEndpointArgs {
     local_port: u16,
     /// the maximum amount of open connections, defaults to 200 (NUM)
     maxconns: Option<u16>,
-     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
     maxidle: Option<usize>,
     // The address the application runs on locally, defaults to 127.0.0.1
     // address_override: Option<String>,
@@ -145,7 +145,9 @@ impl From<ConfigError> for CliError {
 async fn main() {
     let opts: Opts = Opts::parse();
 
-    let addr = opts.ebbflow_addr.unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
+    let addr = opts
+        .ebbflow_addr
+        .unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
 
     let result: Result<(), CliError> = match opts.subcmd {
         SubCommand::Enable(args) => {
@@ -182,26 +184,32 @@ fn handle_enable_disable_ret(
     args: &EnableDisableArgs,
     ret: Result<(bool, bool), CliError>,
 ) -> Result<(), CliError> {
-
-    let word = if enable {
-        "enabled"
-    } else {
-        "disabled"
-    };
+    let word = if enable { "enabled" } else { "disabled" };
 
     match ret {
         Ok((found, mutated)) => match (found, mutated) {
             (true, true) => Ok(()),
-            (true, false) => if !args.idempotent {
-                exiterror(&format!("The specified target was not {}: {}", word, args.target))
-            } else {
-                Ok(())
-            },
-            (false, _) => match (enable, args.idempotent) {
-                (true, _) => exiterror(&format!("The specified target was not enabled as it is not configured: {}", args.target)),
-                (false, false) => exiterror(&format!("Unable to disable target {} as it is not configured", args.target)),
-                (false, true) => Ok(()),
+            (true, false) => {
+                if !args.idempotent {
+                    exiterror(&format!(
+                        "The specified target was not {}: {}",
+                        word, args.target
+                    ))
+                } else {
+                    Ok(())
+                }
             }
+            (false, _) => match (enable, args.idempotent) {
+                (true, _) => exiterror(&format!(
+                    "The specified target was not enabled as it is not configured: {}",
+                    args.target
+                )),
+                (false, false) => exiterror(&format!(
+                    "Unable to disable target {} as it is not configured",
+                    args.target
+                )),
+                (false, true) => Ok(()),
+            },
         },
         Err(e) => Err(e),
     }
@@ -294,17 +302,16 @@ fn extract_yn(yn: &str) -> Option<bool> {
 }
 
 // Returns the String
-async fn poll_key_creation(finalizeme: HostKeyInitFinalizationContext, addr: &str,) -> Result<String, CliError> {
+async fn poll_key_creation(
+    finalizeme: HostKeyInitFinalizationContext,
+    addr: &str,
+) -> Result<String, CliError> {
     print!("Waiting for key creation to be completed");
     let client = reqwest::Client::new();
     loop {
         tokio::time::delay_for(Duration::from_secs(5)).await;
         match client
-            .post(&format!(
-                "{}/hostkeyinit/{}",
-                addr,
-                finalizeme.id
-            ))
+            .post(&format!("{}/hostkeyinit/{}", addr, finalizeme.id))
             .json(&finalizeme)
             .send()
             .await
@@ -414,7 +421,6 @@ async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
             ssh.enabled = enabled;
             (true, true)
         }
-        
     } else {
         (false, false)
     };
@@ -433,7 +439,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
     };
 
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
-    
+
     // make sure it doesn't exist
     for e in existing.endpoints.iter() {
         if e.dns == newendpoint.dns {
@@ -446,9 +452,33 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+// async fn set_key(args: AddEndpointArgs) -> Result<(), CliError> {
+//     let newendpoint = Endpoint {
+//         port: args.local_port,
+//         dns: args.dns,
+//         maxconns: args.maxconns.unwrap_or(500),
+//         maxidle: args.maxidle.unwrap_or(10) as u16,
+//         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
+//         enabled: true,
+//     };
+
+//     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+
+//     // make sure it doesn't exist
+//     for e in existing.endpoints.iter() {
+//         if e.dns == newendpoint.dns {
+//             exiterror(&format!("An endpoint of name {} already exists. Please remove it first then create it again", e.dns));
+//         }
+//     }
+//     // Doesn't exist, add it
+//     existing.endpoints.push(newendpoint);
+//     existing.save_to_file().await?;
+//     Ok(())
+// }
+
 async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
-    
+
     let mut deleted = false;
     // make sure it doesn't exist
     existing.endpoints.retain(|e| {
@@ -467,7 +497,10 @@ async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
         if args.idempotent {
             Ok(())
         } else {
-            exiterror(&format!("Endpoint {} does not exist and was not deleted", args.dns))
+            exiterror(&format!(
+                "Endpoint {} does not exist and was not deleted",
+                args.dns
+            ))
         }
     };
 
@@ -486,9 +519,21 @@ async fn printconfignokey() -> Result<(), CliError> {
             max = std::cmp::max(max, e.dns.len());
         }
 
-        println!("{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t", "DNS", width = max);
+        println!(
+            "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
+            "DNS",
+            width = max
+        );
         for e in existing.endpoints {
-            println!("{:width$}\t{}\t{}\t{}\t\t{}", e.dns, e.port, e.enabled, e.maxconns, e.maxidle, width = max);
+            println!(
+                "{:width$}\t{}\t{}\t{}\t\t{}",
+                e.dns,
+                e.port,
+                e.enabled,
+                e.maxconns,
+                e.maxidle,
+                width = max
+            );
         }
     } else {
         println!("No endpoints configured");
@@ -499,8 +544,20 @@ async fn printconfignokey() -> Result<(), CliError> {
 
     if let Some(sshcfg) = existing.ssh {
         let max = sshcfg.hostname.len();
-        println!("{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t", "Hostname", width = max);
-        println!("{:width$}\t{}\t{}\t{}\t\t{}", sshcfg.hostname, sshcfg.port, sshcfg.enabled, sshcfg.maxconns, sshcfg.maxidle, width = max);
+        println!(
+            "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
+            "Hostname",
+            width = max
+        );
+        println!(
+            "{:width$}\t{}\t{}\t{}\t\t{}",
+            sshcfg.hostname,
+            sshcfg.port,
+            sshcfg.enabled,
+            sshcfg.maxconns,
+            sshcfg.maxidle,
+            width = max
+        );
     } else {
         println!("SSH not configured");
     }
@@ -508,13 +565,15 @@ async fn printconfignokey() -> Result<(), CliError> {
     Ok(())
 }
 
-
 async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
     if let Some(_existing) = existing.ssh {
         exiterror("SSH configuration already set up, please remove it and then recreate it");
     }
-    let idle = std::cmp::min(args.maxidle.unwrap_or_else(|| DEFAULT_SSH_IDLE), ebbflow::MAX_MAX_IDLE as u16);
+    let idle = std::cmp::min(
+        args.maxidle.unwrap_or_else(|| DEFAULT_SSH_IDLE),
+        ebbflow::MAX_MAX_IDLE as u16,
+    );
 
     existing.ssh = Some(Ssh {
         maxconns: args.maxconns.unwrap_or(DEFAULT_SSH_CONNS),

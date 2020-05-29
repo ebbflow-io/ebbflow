@@ -4,28 +4,23 @@ extern crate log;
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
+use ebbflow::signal::SignalReceiver;
+use ebbflow::signal::SignalSender;
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
-use rustls::RootCertStore;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
-use ebbflow::signal::SignalReceiver;
-use ebbflow::signal::SignalSender;
 
 #[cfg(windows)]
 fn main() {
-    println!("hi");
     let _ = windows::run();
 }
 
 #[cfg(windows)]
 mod windows {
-    use std::{
-        ffi::OsString,
-        time::Duration,
-    };
     use ebbflow::signal::SignalSender;
+    use std::{ffi::OsString, time::Duration};
     use windows_service::{
         define_windows_service,
         service::{
@@ -62,8 +57,6 @@ mod windows {
     pub fn run_service() -> Result<()> {
         std::env::set_var("RUST_LOG", "DEBUG");
         winlog::init("Ebbflow Service Log").unwrap();
-        info!("Hello, Event Log");
-        info!("Hello, Event Log NEW ONE II");
         // Create a channel to be able to poll a stop event from the service worker loop.
         let sender = SignalSender::new();
         let r = sender.new_receiver();
@@ -142,7 +135,7 @@ mod windows {
 
 #[cfg(not(windows))]
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), ()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
@@ -151,30 +144,24 @@ async fn main() {
     let sender = SignalSender::new();
     let r = sender.new_receiver();
 
-    realmain(r).await;
-}
-
-async fn _test_poop() {
-    loop {
-        tokio::time::delay_for(Duration::from_secs(3)).await;
-        warn!("poop");
-        error!("pooerrp");
-        info!("poopinf");
+    match realmain(r).await {
+        Ok(_) => {
+            info!("Daemon exiting");
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Daemon exited with error: {:?}", e);
+            eprintln!("Daemon exited with error: {:?}", e);
+            Err(())
+        }
     }
 }
 
 async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
-    // TODO: see if there is an override so if this fails we are still ok?
-    let roots = match load_roots() {
-        Some(r) => r,
-        None => return Err("Error loading trusted certificates from OS".to_string()),
-    };
-
-    error!("cfg full: {}", ebbflow::config_file_full());
-
     let notify = Arc::new(Notify::new());
     let notifyc = notify.clone();
-    let mut watcher: RecommendedWatcher = match Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
+    let mut watcher: RecommendedWatcher =
+        match Watcher::new_immediate(move |res: Result<Event, notify::Error>| {
             trace!("Received a notification");
             match res {
                 Ok(event) => match event.kind {
@@ -200,36 +187,27 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 
     // We only care about mutations
     if let Err(e) = watcher.configure(Config::PreciseEvents(true)) {
-        return Err(format!("Unable to set file event configuration options (precise) {:?}", e));
+        return Err(format!(
+            "Unable to set file event configuration options (precise) {:?}",
+            e
+        ));
     }
 
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
     if let Err(e) = watcher.watch(ebbflow::config_path_root(), RecursiveMode::Recursive) {
-        return Err(format!("Unable to set file event configuration options {:?}", e));
+        return Err(format!(
+            "Unable to set file event configuration options {:?}",
+            e
+        ));
     }
 
-    let sharedinfo = Arc::new(
-        match SharedInfo::new(roots)
-        .await {
-            Ok(x) => x,
-            Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
-        }
-    );
+    let sharedinfo = Arc::new(match SharedInfo::new().await {
+        Ok(x) => x,
+        Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+    });
 
-    // let sharedinfo = Arc::new(
-    //     match SharedInfo::new_with_ebbflow_overrides(
-    //         "127.0.0.1:7070".parse().unwrap(),
-    //         "s.preview.ebbflow.io".to_string(),
-    //         roots,
-    //     )
-    //     .await {
-    //         Ok(x) => x,
-    //         Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
-    //     }
-    // );
-
-    let runner = run_daemon(sharedinfo, Box::pin(config_reload), load_roots, notify).await;
+    let runner = run_daemon(sharedinfo, Box::pin(config_reload), notify).await;
 
     tokio::spawn(async move {
         loop {
@@ -244,12 +222,4 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 
 pub fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {
     Box::pin(async { EbbflowDaemonConfig::load_from_file().await })
-}
-
-pub fn load_roots() -> Option<RootCertStore> {
-    match rustls_native_certs::load_native_certs() {
-        rustls_native_certs::PartialResult::Ok(rcs) => Some(rcs),
-        rustls_native_certs::PartialResult::Err((Some(rcs), _)) => Some(rcs),
-        _ => None,
-    }
 }
