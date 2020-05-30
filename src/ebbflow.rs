@@ -231,9 +231,8 @@ async fn init(addr: &str) -> Result<(), CliError> {
     let enablessh = loop {
         let mut yn = String::new();
         io::stdin().read_line(&mut yn)?;
-        match extract_yn(&yn) {
-            Some(enabled) => break enabled,
-            None => {}
+        if let Some(enabled) = extract_yn(&yn) {
+            break enabled
         }
         println!(
             "Could not parse {} into yes or no (or y or n), please retry",
@@ -246,9 +245,8 @@ async fn init(addr: &str) -> Result<(), CliError> {
         if !loop {
             let mut yn = String::new();
             io::stdin().read_line(&mut yn)?;
-            match extract_yn(&yn) {
-                Some(yn) => break yn,
-                None => {}
+            if let Some(yn) = extract_yn(&yn) {
+                break yn
             }
             println!(
                 "Could not parse {} into yes or no (or y or n), please retry",
@@ -319,7 +317,7 @@ async fn poll_key_creation(
             Ok(response) => match response.status() {
                 StatusCode::OK => {
                     use std::io::Write;
-                    print!("\n");
+                    println!();
                     let _ = std::io::stdout().flush();
                     let keydata: KeyData = response.json().await?;
                     return Ok(keydata.key);
@@ -391,7 +389,7 @@ async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(bool,
     let mut mutated = false;
     for e in existing.endpoints.iter_mut() {
         if let Some(actualdns) = dns {
-            if actualdns == &e.dns {
+            if actualdns == e.dns {
                 if e.enabled == enabled {
                     mutated = false;
                 } else {
@@ -491,17 +489,13 @@ async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
     });
 
     // Not my finest but it'll do
-    let ret = if deleted {
+    let ret = if deleted || args.idempotent{
         Ok(())
     } else {
-        if args.idempotent {
-            Ok(())
-        } else {
-            exiterror(&format!(
-                "Endpoint {} does not exist and was not deleted",
-                args.dns
-            ))
-        }
+        exiterror(&format!(
+            "Endpoint {} does not exist and was not deleted",
+            args.dns
+        ))
     };
 
     existing.save_to_file().await?;
@@ -538,7 +532,7 @@ async fn printconfignokey() -> Result<(), CliError> {
     } else {
         println!("No endpoints configured");
     }
-    println!("");
+    println!();
     println!("SSH Configuration");
     println!("-----------------");
 
@@ -579,7 +573,7 @@ async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
         maxconns: args.maxconns.unwrap_or(DEFAULT_SSH_CONNS),
         port: args.port.unwrap_or(22),
         enabled: true,
-        hostname: args.hostname.unwrap_or_else(|| hostname_or_die()),
+        hostname: args.hostname.unwrap_or_else(hostname_or_die),
         maxidle: idle,
     });
 

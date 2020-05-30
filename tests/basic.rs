@@ -299,7 +299,7 @@ mod basic_tests_v0 {
             endpoints: vec![],
             ssh: Some(Ssh {
                 port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
-                hostname: hostname,
+                hostname,
                 enabled: true,
                 maxconns: 100,
                 maxidle: 2,
