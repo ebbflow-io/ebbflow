@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
 lazy_static! {
-    pub static ref CONFIG_PATH: String =  "/etc/ebbflow".to_string() ;
+    pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
 }
 #[cfg(target_os = "macos")]
 pub const CONFIG_PATH: &str = "asdf";

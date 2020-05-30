@@ -232,7 +232,7 @@ async fn init(addr: &str) -> Result<(), CliError> {
         let mut yn = String::new();
         io::stdin().read_line(&mut yn)?;
         if let Some(enabled) = extract_yn(&yn) {
-            break enabled
+            break enabled;
         }
         println!(
             "Could not parse {} into yes or no (or y or n), please retry",
@@ -246,7 +246,7 @@ async fn init(addr: &str) -> Result<(), CliError> {
             let mut yn = String::new();
             io::stdin().read_line(&mut yn)?;
             if let Some(yn) = extract_yn(&yn) {
-                break yn
+                break yn;
             }
             println!(
                 "Could not parse {} into yes or no (or y or n), please retry",
@@ -489,7 +489,7 @@ async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
     });
 
     // Not my finest but it'll do
-    let ret = if deleted || args.idempotent{
+    let ret = if deleted || args.idempotent {
         Ok(())
     } else {
         exiterror(&format!(

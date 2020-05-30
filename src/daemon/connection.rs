@@ -333,12 +333,10 @@ async fn proxy(
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
 
-    let local2ebb = Box::pin(async move {
-        copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start).await
-    });
-    let ebb2local = Box::pin(async move {
-        copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start).await
-    });
+    let local2ebb =
+        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start).await });
+    let ebb2local =
+        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start).await });
 
     match futures::future::select(local2ebb, ebb2local).await {
         Either::Left((_server_read_res, _c2s_future)) => (),
