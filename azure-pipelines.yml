@@ -35,7 +35,10 @@ stages:
       image: docker.pkg.github.com/ebbflow-io/ebbflow-build/deb:latest
       endpoint: githubdocker
     steps:
+    - bash: which cargo
+    - bash: which rustup
+    - bash: which rustc
     - bash: printenv
     - bash: pwd
-    # - bash: cargo-deb --target=x86_64-unknown-linux-musl
-    #   displayName: 'Run Deb Build'
+    - bash: cargo deb --target=x86_64-unknown-linux-musl
+      displayName: 'Run Deb Build'
