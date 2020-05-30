@@ -24,7 +24,7 @@ stages:
   jobs:
   - template: ci/scenarios/test.yml@rust_pipelines
     parameters:
-      min_rust_supported: 1.43  # Use first rust version you wanna support
+      min_rust_supported: 1.43.1  # Use first rust version you wanna support
 - stage: BuildPackages
   displayName: "Build Distributable Packages"
   pool:
