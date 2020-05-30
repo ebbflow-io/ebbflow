@@ -191,7 +191,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
 
     let now = Instant::now();
     // Traffic start, connect local real quick
-    let local = match connect_local(args.local_addr.clone()).await {
+    let local = match connect_local(args.local_addr).await {
         Ok(localstream) => {
             trace!(
                 "Connected to local address {:?} for endpoint {}",
@@ -262,7 +262,7 @@ async fn connect_ebbflow(
     args: &EndpointConnectionArgs,
 ) -> Result<TlsStream<TcpStream>, ConnectionError> {
     let tcpstream = tol(
-        TcpStream::connect(args.ebbflow_addr.clone()),
+        TcpStream::connect(args.ebbflow_addr),
         "connecting to ebbflow",
     )
     .await??;
@@ -333,12 +333,10 @@ async fn proxy(
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
 
-    let local2ebb = Box::pin(async move {
-        copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start.clone()).await
-    });
-    let ebb2local = Box::pin(async move {
-        copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start.clone()).await
-    });
+    let local2ebb =
+        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start).await });
+    let ebb2local =
+        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start).await });
 
     match futures::future::select(local2ebb, ebb2local).await {
         Either::Left((_server_read_res, _c2s_future)) => (),

@@ -8,6 +8,7 @@ pub struct SignalSender {
 }
 
 impl SignalSender {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let (s, r) = channel(false);
         Self {

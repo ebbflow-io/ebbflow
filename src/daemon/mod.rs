@@ -57,7 +57,7 @@ impl SharedInfo {
         Ok(Self {
             dns: DnsResolver::new().await?,
             key: Mutex::new(None),
-            roots: roots,
+            roots,
             hardcoded_ebbflow_addr: overriddenmaybe,
             hardcoded_ebbflow_dns: overridedns,
         })
@@ -78,7 +78,7 @@ impl SharedInfo {
 
     pub async fn ebbflow_addr(&self) -> SocketAddrV4 {
         if let Some(overridden) = self.hardcoded_ebbflow_addr {
-            return overridden.clone();
+            return overridden;
         }
         let ips = self.dns.ips(EBBFLOW_DNS).await.unwrap_or_else(|_| {
             vec![
@@ -89,7 +89,7 @@ impl SharedInfo {
 
         let mut small_rng = SmallRng::from_entropy();
         let chosen = ips[..].choose(&mut small_rng);
-        SocketAddrV4::new(chosen.unwrap().clone(), EBBFLOW_PORT)
+        SocketAddrV4::new(*chosen.unwrap(), EBBFLOW_PORT)
     }
 
     pub fn ebbflow_dns(&self) -> webpki::DNSName {
@@ -251,7 +251,7 @@ async fn create_args(
     EndpointConnectionArgs {
         endpoint: args.endpoint.clone(),
         key: info.key().unwrap_or_else(|| "unset".to_string()),
-        local_addr: args.local_addr.clone(),
+        local_addr: args.local_addr,
         ctype: args.ctype,
         ebbflow_addr: info.ebbflow_addr().await,
         ebbflow_dns: info.ebbflow_dns(),

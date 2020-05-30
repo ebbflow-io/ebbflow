@@ -20,9 +20,9 @@ use tokio::sync::Notify;
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
 lazy_static! {
-    pub static ref CONFIG_PATH: String = { "/etc/ebbflow".to_string() };
+    pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
 }
-#[cfg(macos)]
+#[cfg(target_os = "macos")]
 pub const CONFIG_PATH: &str = "asdf";
 #[cfg(windows)]
 lazy_static! {
@@ -336,6 +336,7 @@ pub async fn spawn_endpointasdfsfa(
     spawn_endpoint(info, args).await
 }
 
+#[allow(clippy::type_complexity)]
 pub async fn run_daemon(
     info: Arc<SharedInfo>,
     cfg_reload: Pin<
@@ -370,9 +371,8 @@ pub async fn run_daemon(
             trace!("Got a notification");
         }
     });
-    let runnerc = runner.clone();
 
-    runnerc
+    runner
 }
 
 pub fn hostname_or_die() -> String {
