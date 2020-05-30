@@ -19,20 +19,19 @@ stages:
   displayName: "Quick checks"
   jobs:
   - template: ci/scenarios/check.yml@rust_pipelines
-- stage: MultiOsChecks
-  displayName: "Multi OS Tests"
-  jobs:
-  - template: ci/scenarios/test.yml@rust_pipelines
-    parameters:
-      min_rust_supported: 1.43.1  # Use first rust version you wanna support
+# - stage: MultiOsChecks
+#   displayName: "Multi OS Tests"
+#   jobs:
+#   - template: ci/scenarios/test.yml@rust_pipelines
+#     parameters:
+#       min_rust_supported: 1.43.1  # Use first rust version you wanna support
 - stage: BuildPackages
   displayName: "Build Distributable Packages"
   pool:
-    vmImage: 'ubuntu-latest'
+    vmImage: 'ubuntu-16.04'
   jobs:
   - job:
+    container: docker.pkg.github.com/ebbflow-io/ebbflow-build/deb:latest
     steps:
-    - bash: echo "Hello world"
-      displayName: 'Run a one-line script'
-    - bash: echo "Hello world II"
-      displayName: 'Run do something else'
+    - bash: cargo-deb --target=x86_64-unknown-linux-musl
+      displayName: 'Run Deb Build'
