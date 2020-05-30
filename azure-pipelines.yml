@@ -43,5 +43,5 @@ stages:
     - bash: echo "##vso[task.setvariable variable=PATH;]$PATH:/root/.cargo/bin"
     - bash: printenv
     - bash: echo $PATH
-    - bash: /root/.cargo/bin/cargo deb --target=x86_64-unknown-linux-musl
+    - bash: sudo /root/.cargo/bin/cargo deb --target=x86_64-unknown-linux-musl
       displayName: 'Run Deb Build'
