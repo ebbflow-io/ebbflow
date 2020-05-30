@@ -20,12 +20,11 @@ stages:
   jobs:
   - template: ci/scenarios/check.yml@rust_pipelines
 - stage: MultiOsChecks
-  displayName: "Multi OS native tests"
+  displayName: "Multi OS Tests"
   jobs:
   - template: ci/scenarios/test.yml@rust_pipelines
-    parameters:
-      min_rust_supported: 1.31  # Use first rust version you wanna support
 - stage: BuildPackages
+  displayName: "Build Distributable Packages"
   pool:
     vmImage: 'ubuntu-latest'
   jobs:

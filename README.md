@@ -8,6 +8,8 @@ This is the end-host client for [`ebbflow`](https://ebbflow.io). This is used to
 ebbflow --help
 ```
 
+[![Build Status](https://dev.azure.com/ryan0769/ebbflow-test/_apis/build/status/ebbflow-io.ebbflow?branchName=azure-pipelines-testing)](https://dev.azure.com/ryan0769/ebbflow-test/_build/latest?definitionId=1&branchName=azure-pipelines-testing)
+
 ## Downloading, Updating, and Removing
 
 Mac
