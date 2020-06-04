@@ -1,3 +1,5 @@
+![Continuous Integration](https://github.com/ebbflow-io/ebbflow/workflows/Continuous%20Integration/badge.svg)
+
 # Ebbflow Client
 
 **NOTE** This is `Beta` quality as of now, and could use some more features and configurable settings!
