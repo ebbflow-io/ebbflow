@@ -59,6 +59,7 @@ impl EbbflowDaemonConfig {
 
         Ok(parsed)
     }
+
     pub async fn save_to_file(&self) -> Result<(), ConfigError> {
         let b: String = match serde_yaml::to_string(self) {
             Ok(s) => s,

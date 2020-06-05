@@ -28,7 +28,7 @@ pub const CONFIG_PATH: &str = "asdf";
 lazy_static! {
     pub static ref CONFIG_PATH: String = {
         //format!("{}\\ebbflow", dirs_next::cache_dir().unwrap().to_string_lossy())
-        "C:\\Program Files\\ebbflow".to_string()
+        "\\Program Files\\ebbflow".to_string()
     };
 }
 
