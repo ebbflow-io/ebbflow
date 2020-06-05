@@ -10,6 +10,7 @@ pub enum ConfigError {
     Parsing,
     FileNotFound,
     FilePermissions,
+    Empty,
     Unknown(String),
 }
 
@@ -21,6 +22,18 @@ impl From<IoError> for ConfigError {
             _ => ConfigError::Unknown(format!("Unexepected error reading config file {:?}", ioe)),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PossiblyEmptyEbbflowDaemonConfig {
+    Empty,
+    EbbflowDaemonConfig(EbbflowDaemonConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Empty {
+    pub empty: bool,
 }
 
 /// Configuration for Ebbflow. Will be parsed to/from a YAML file located at
@@ -50,7 +63,10 @@ impl EbbflowDaemonConfig {
         let filebytes = fs::read(config_file_full()).await?;
 
         let parsed: EbbflowDaemonConfig = match serde_yaml::from_slice(&filebytes[..]) {
-            Ok(p) => p,
+            Ok(p) => match p {
+                PossiblyEmptyEbbflowDaemonConfig::Empty => return Err(ConfigError::Empty),
+                PossiblyEmptyEbbflowDaemonConfig::EbbflowDaemonConfig(c) => c,
+            },
             Err(_e) => {
                 info!("Error parsing configuration file");
                 return Err(ConfigError::Parsing);

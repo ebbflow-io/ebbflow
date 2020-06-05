@@ -172,6 +172,7 @@ async fn main() {
                 ConfigError::FileNotFound => exiterror("Expected configuration file not found, has initialization occurred yet?"),
                 ConfigError::Parsing => exiterror("Failed to parse configuration properly, please notify Ebbflow"),
                 ConfigError::Unknown(s) => exiterror(&format!("Unexpected error: {}, Please notify Ebbflow", s)),
+                ConfigError::Empty => exiterror("The configuration file is empty, please run initialization (ebbflow init) first"),
             }
             CliError::StdIoError(_e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
             CliError::Http(e) => exiterror(&format!("Problem making HTTP request to Ebbflow, please try again soon. For debugging: {:?}", e)),
