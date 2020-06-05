@@ -86,7 +86,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                     <Component Id="conf.yaml" Guid="cc509cb7-c1a1-46cf-8c62-7cbb0017783c" Win64='$(var.Win64)' NeverOverwrite='yes'>
                       <File Id="ConfigFile"
                         Name="config.yaml"
-                        Source='assets\empty.conf.yaml'
+                        Source='assets\empty.config.yaml'
                         KeyPath='yes'
                         DiskId='1'>
                         <Permission User="Everyone" GenericAll="no" />
