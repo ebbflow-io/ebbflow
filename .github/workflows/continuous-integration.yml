@@ -197,5 +197,5 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./macos/ebbflow_${{needs.quickcheck.outputs.version}}_macos.zip
-          asset_name: 'ebbflow_${{needs.quickcheck.outputs.versionrustversion}}_macos.zip'
+          asset_name: 'ebbflow_${{needs.quickcheck.outputs.version}}_macos.zip'
           asset_content_type: application/zip
