@@ -23,12 +23,11 @@ lazy_static! {
     pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
 }
 #[cfg(target_os = "macos")]
-pub const CONFIG_PATH: &str = "asdf";
+pub const CONFIG_PATH: &str = "/usr/local/etc";
 #[cfg(windows)]
 lazy_static! {
     pub static ref CONFIG_PATH: String = {
-        //format!("{}\\ebbflow", dirs_next::cache_dir().unwrap().to_string_lossy())
-        "C:\\Program Files\\ebbflow".to_string()
+        "\\Program Files\\ebbflow".to_string()
     };
 }
 
