@@ -238,7 +238,7 @@ async fn inner_run_endpoint(
         );
         tokio::spawn(async move {
             run_connection(receiverc, args, idlepermit, m.clone()).await;
-            error!("Connection ended i{} a{}", m.num_idle(), m.num_active());
+            debug!("Connection ended i{} a{}", m.num_idle(), m.num_active());
             drop(maxpermit);
         });
     }

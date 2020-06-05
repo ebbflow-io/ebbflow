@@ -26,9 +26,7 @@ lazy_static! {
 pub const CONFIG_PATH: &str = "/usr/local/etc";
 #[cfg(windows)]
 lazy_static! {
-    pub static ref CONFIG_PATH: String = {
-        "\\Program Files\\ebbflow".to_string()
-    };
+    pub static ref CONFIG_PATH: String = { "\\Program Files\\ebbflow".to_string() };
 }
 
 pub fn config_path_root() -> String {

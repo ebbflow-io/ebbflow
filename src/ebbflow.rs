@@ -1,6 +1,12 @@
+#[macro_use]
+extern crate log;
+
 use clap::Clap;
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
-use ebbflow::hostname_or_die;
+use ebbflow::{
+    daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
+    hostname_or_die,
+};
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use regex::Regex;
 use reqwest::StatusCode;
@@ -9,6 +15,8 @@ use std::time::Duration;
 use std::{
     fmt::{Display, Formatter},
     io::Error as IoError,
+    net::SocketAddrV4,
+    sync::Arc,
 };
 
 const DEFAULT_SSH_CONNS: u16 = 10;
@@ -17,18 +25,37 @@ const DEFAULT_EBBFLOW_API_ADDR: &str = "https://api.ebbflow.io/v1";
 const DEFAULT_EBBFLOW_SITE_ADDR: &str = "https://ebbflow.io/init";
 
 #[derive(Debug, Clap)]
+#[clap(
+    max_term_width = 120,
+    about = "The command line interface to control the Ebbflow proxy. The proxy runs in the background in the daemon in most cases, and most of the commands are used to modify this daemon.\n\nPlease see https://ebbflow.io/documentation#client for any questions."
+)]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
-
-    #[clap(hidden = true)]
-    ebbflow_addr: Option<String>,
+    // #[clap(hidden = true)]
+    // ebbflow_addr: Option<String>,
 }
 
 #[derive(Debug, Clap)]
 enum SubCommand {
     /// Run the interactive initialization, retrieves a host key and sets up basic settings
     Init,
+    /// Configure the background daemon
+    Config(ConfigSubCommand),
+    /// Run the ebbflow proxy now, in a blocking fashion, without the daemon.
+    /// Typically used in container environments.
+    /// Use `EBB_KEY` environment variable to pass the key in, or it will fallback to key from init
+    RunBlocking(RunBlockingArgs),
+}
+
+#[derive(Debug, Clap)]
+struct ConfigSubCommand {
+    #[clap(subcommand)]
+    config: Config,
+}
+
+#[derive(Debug, Clap)]
+enum Config {
     /// Enable endpoint(s) or SSH proxying
     Enable(EnableDisableArgs),
     /// Disable endpoint(s) or SSH proxying
@@ -42,7 +69,19 @@ enum SubCommand {
     /// Remove the SSH configuration, disabling the proxy
     RemoveSshConfiguration,
     /// Prints the current configuration (NOTE: Output subject to change)
-    PrintConfig,
+    Print,
+}
+
+#[derive(Debug, Clap)]
+struct RunBlockingArgs {
+    /// The local port, e.g. 80 or 7000
+    port: u16,
+    /// The endpoint, e.g. example.com
+    dns: String,
+    /// The maximum amount of connections allowed
+    maxconns: Option<u16>,
+    /// How many idle connections to keep open
+    maxidle: Option<u16>,
 }
 
 #[derive(Debug, Clap)]
@@ -121,6 +160,7 @@ enum CliError {
     ConfigError(ConfigError),
     StdIoError(IoError),
     Http(reqwest::Error),
+    Other(String),
 }
 
 impl From<reqwest::Error> for CliError {
@@ -145,23 +185,27 @@ impl From<ConfigError> for CliError {
 async fn main() {
     let opts: Opts = Opts::parse();
 
-    let addr = opts
-        .ebbflow_addr
-        .unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
+    // let addr = opts
+    //     .ebbflow_addr
+    //     .unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
+    let addr = DEFAULT_EBBFLOW_API_ADDR.to_owned();
 
     let result: Result<(), CliError> = match opts.subcmd {
-        SubCommand::Enable(args) => {
-            handle_enable_disable_ret(true, &args, enabledisable(true, &args.target).await)
-        }
-        SubCommand::Disable(args) => {
-            handle_enable_disable_ret(false, &args, enabledisable(false, &args.target).await)
-        }
+        SubCommand::Config(cfg) => match cfg.config {
+            Config::Enable(args) => {
+                handle_enable_disable_ret(true, &args, enabledisable(true, &args.target).await)
+            }
+            Config::Disable(args) => {
+                handle_enable_disable_ret(false, &args, enabledisable(false, &args.target).await)
+            }
+            Config::AddEndpoint(args) => add_endpoint(args).await,
+            Config::RemoveEndpoint(args) => remove_endpoint(args).await,
+            Config::Print => printconfignokey().await,
+            Config::SetupSsh(args) => setup_ssh(args).await,
+            Config::RemoveSshConfiguration => remove_ssh().await,
+        },
         SubCommand::Init => init(&addr).await,
-        SubCommand::AddEndpoint(args) => add_endpoint(args).await,
-        SubCommand::RemoveEndpoint(args) => remove_endpoint(args).await,
-        SubCommand::PrintConfig => printconfignokey().await,
-        SubCommand::SetupSsh(args) => setup_ssh(args).await,
-        SubCommand::RemoveSshConfiguration => remove_ssh().await,
+        SubCommand::RunBlocking(args) => run_blocking(args).await,
     };
 
     match result {
@@ -176,6 +220,7 @@ async fn main() {
             }
             CliError::StdIoError(_e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
             CliError::Http(e) => exiterror(&format!("Problem making HTTP request to Ebbflow, please try again soon. For debugging: {:?}", e)),
+            CliError::Other(e) => exiterror(&format!("Unexpected error: {}", e)),
         }
     }
 }
@@ -586,5 +631,46 @@ async fn remove_ssh() -> Result<(), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
     existing.ssh = None;
     existing.save_to_file().await?;
+    Ok(())
+}
+
+async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
+    let info = SharedInfo::new()
+        .await
+        .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?;
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
+        .init();
+    let key = match std::env::var("EBB_KEY").ok() {
+        Some(k) => {
+            debug!("Key passed in");
+            k
+        }
+        None => {
+            debug!("No key passed, trying cfg");
+            EbbflowDaemonConfig::load_from_file().await?.key
+        }
+    };
+
+    info.update_key(key);
+
+    let address = "127.0.0.1";
+    let ip = address.parse().unwrap();
+    let addr = SocketAddrV4::new(ip, args.port);
+
+    spawn_endpoint(
+        Arc::new(info),
+        EndpointArgs {
+            ctype: EndpointConnectionType::Tls,
+            idleconns: args.maxidle.unwrap_or(10) as usize,
+            maxconns: args.maxidle.unwrap_or(10_000) as usize,
+            endpoint: args.dns,
+            local_addr: addr,
+        },
+    )
+    .await;
+
+    futures::future::pending::<()>().await;
     Ok(())
 }
