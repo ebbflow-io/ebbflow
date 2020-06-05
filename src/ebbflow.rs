@@ -33,8 +33,6 @@ enum SubCommand {
     Enable(EnableDisableArgs),
     /// Disable endpoint(s) or SSH proxying
     Disable(EnableDisableArgs),
-    /// Set the host key
-    SetKey(SetKeyArgs),
     /// Add a new endpoint
     AddEndpoint(AddEndpointArgs),
     /// Remove (and shut down) an endpoint
@@ -107,12 +105,6 @@ enum EnableDisableTarget {
     Endpoint(EndpointDns),
 }
 
-#[derive(Debug, Clap)]
-struct SetKeyArgs {
-    /// The key this host will use, e.g. ebb_hst_12341234
-    key: String,
-}
-
 impl Display for EnableDisableTarget {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = match self {
@@ -170,7 +162,6 @@ async fn main() {
         SubCommand::PrintConfig => printconfignokey().await,
         SubCommand::SetupSsh(args) => setup_ssh(args).await,
         SubCommand::RemoveSshConfiguration => remove_ssh().await,
-        SubCommand::SetKey(args) => set_key(args).await,
     };
 
     match result {
@@ -379,6 +370,10 @@ async fn create_key_request(
     ))
 }
 
+// init
+// status (endpoints and ssh)
+// get config file loc
+
 async fn enabledisable(enable: bool, args: &EnableDisableTarget) -> Result<(bool, bool), CliError> {
     match args {
         EnableDisableTarget::Ssh => set_ssh_enabled(enable).await,
@@ -429,29 +424,6 @@ async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
     };
     existing.save_to_file().await?;
     Ok(ret)
-}
-
-async fn set_key(args: SetKeyArgs) -> Result<(), CliError> {
-    let mut existing = match EbbflowDaemonConfig::load_from_file().await {
-        Ok(e) => e,
-        Err(cfge) => {
-            if let ConfigError::FileNotFound = cfge {
-                EbbflowDaemonConfig {
-                    key: args.key.clone(),
-                    endpoints: vec![],
-                    ssh: None,
-                }
-            } else {
-                return Err(cfge.into());
-            }
-        }
-    };
-
-    // This may get set 2x if we got FileNotFound, but who cares
-    existing.key = args.key;
-
-    existing.save_to_file().await?;
-    Ok(())
 }
 
 async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
