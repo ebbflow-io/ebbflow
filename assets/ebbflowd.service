@@ -9,7 +9,5 @@ Restart=always
 RestartSec=1
 Type=simple
 
-Environment=EBB_ENVFILE=/path/to/env/file
-
 [Install]
 WantedBy=multi-user.target

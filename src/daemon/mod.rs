@@ -22,6 +22,7 @@ use tokio_rustls::TlsConnector;
 
 const EBBFLOW_DNS: &str = "s.ebbflow.io";
 const EBBFLOW_PORT: u16 = 443;
+const MAX_IDLE: usize = 100;
 
 pub struct SharedInfo {
     dns: DnsResolver,
@@ -159,7 +160,7 @@ impl EndpointMeta {
 }
 
 /// This runs this endpoint. To stop it, SEND THE SIGNAL
-pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<EndpointMeta> {
+pub async fn spawn_endpoint(info: Arc<SharedInfo>, mut args: EndpointArgs) -> Arc<EndpointMeta> {
     let sender = SignalSender::new();
     let receiver = sender.new_receiver();
     let mut ourreceiver = sender.new_receiver();
@@ -167,6 +168,8 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, args: EndpointArgs) -> Arc<En
     let metac1 = meta.clone();
     let metac2 = meta.clone();
     let e = args.endpoint.clone();
+
+    args.idleconns = std::cmp::min(args.idleconns, MAX_IDLE);
 
     const POST_CANCEL_DELAY: Duration = Duration::from_secs(3);
 
