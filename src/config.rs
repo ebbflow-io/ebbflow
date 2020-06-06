@@ -5,6 +5,7 @@ use tokio::fs;
 use tokio::fs::OpenOptions as TokioOpenOptions;
 use tokio::io::Error as IoError;
 use tokio::io::ErrorKind;
+
 #[derive(Debug)]
 pub enum ConfigError {
     Parsing,

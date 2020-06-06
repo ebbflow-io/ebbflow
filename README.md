@@ -68,10 +68,6 @@ cargo wix
 
 TODO
 
-## Future Plans
+## License
 
-TODO
-
-## How It Works / Design
-
-TODO
+See LICENSE

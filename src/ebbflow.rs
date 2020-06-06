@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use clap::Clap;
+use clap::{crate_version, Clap};
 use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::{
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
@@ -18,6 +18,7 @@ use std::{
     net::SocketAddrV4,
     sync::Arc,
 };
+use log::LevelFilter;
 
 const DEFAULT_SSH_CONNS: u16 = 10;
 const DEFAULT_SSH_IDLE: u16 = 3;
@@ -26,6 +27,7 @@ const DEFAULT_EBBFLOW_SITE_ADDR: &str = "https://ebbflow.io/init";
 
 #[derive(Debug, Clap)]
 #[clap(
+    version = crate_version!(),
     max_term_width = 120,
     about = "The command line interface to control the Ebbflow proxy. The proxy runs in the background in the daemon in most cases, and most of the commands are used to modify this daemon.\n\nPlease see https://ebbflow.io/documentation#client for any questions."
 )]
@@ -79,9 +81,14 @@ struct RunBlockingArgs {
     /// The endpoint, e.g. example.com
     dns: String,
     /// The maximum amount of connections allowed
+    #[clap(long)]
     maxconns: Option<u16>,
     /// How many idle connections to keep open
+    #[clap(long)]
     maxidle: Option<u16>,
+    /// Log level. Debug, Info, Warn (Default), NOTE: Output is subject to change!!
+    #[clap(long)]
+    loglevel: Option<LevelFilter>,
 }
 
 #[derive(Debug, Clap)]
@@ -92,12 +99,16 @@ struct EndpointDns {
 #[derive(Debug, Clap)]
 struct SetupSshArgs {
     /// The max number of connections, default 10
+    #[clap(long)]
     maxconns: Option<u16>,
     /// The port the SSH daemon runs on, default 22
+    #[clap(long)]
     port: Option<u16>,
     /// The hostname to use, default is taken from OS
+    #[clap(long)]
     hostname: Option<String>,
     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    #[clap(long)]
     maxidle: Option<u16>,
 }
 
@@ -107,9 +118,11 @@ struct AddEndpointArgs {
     dns: String,
     /// The port the local service runs on (NUM)
     local_port: u16,
-    /// the maximum amount of open connections, defaults to 200 (NUM)
+    /// the maximum amount of open connections, defaults to 200 (NUM)\
+    #[clap(long)]
     maxconns: Option<u16>,
     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    #[clap(long)]
     maxidle: Option<usize>,
     // The address the application runs on locally, defaults to 127.0.0.1
     // address_override: Option<String>,
@@ -180,11 +193,14 @@ impl From<ConfigError> for CliError {
         CliError::ConfigError(v)
     }
 }
+use clap::{AppSettings, derive::IntoApp};
+use clap::derive::FromArgMatches;
 
 #[tokio::main]
 async fn main() {
-    let opts: Opts = Opts::parse();
-
+    let app = Opts::into_app();
+    let app = app.setting(AppSettings::VersionlessSubcommands);
+    let opts: Opts = Opts::from_arg_matches(&app.get_matches());
     // let addr = opts
     //     .ebbflow_addr
     //     .unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
@@ -477,7 +493,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
         port: args.local_port,
         dns: args.dns,
         maxconns: args.maxconns.unwrap_or(500),
-        maxidle: args.maxidle.unwrap_or(10) as u16,
+        maxidle: args.maxidle.unwrap_or(20) as u16,
         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
         enabled: true,
     };
@@ -639,7 +655,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
         .await
         .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?;
     env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(args.loglevel.unwrap_or(LevelFilter::Warn))
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
     let key = match std::env::var("EBB_KEY").ok() {
