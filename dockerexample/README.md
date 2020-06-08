@@ -7,3 +7,9 @@ Some notes:
 - The command prints output, at various log levels (which you can specify), so redirecting this to a file is encouraged, thus `&> ebb.log`.
 - This command needs to be run in the background because it is blocking, thus the trailing `&`.
 - `run-blocking` does NOT require to be ran as the `ROOT` user, and the example shows this running as the user `toby`.
+
+Example Execution for endpoint `myendpoint.com`:
+
+```
+docker run --rm -it --env EBB_KEY=ebb_hst_ffvxa3aGo6iFJrmCHXKTXPy3i5FQIIaahexample . myendpoint.com
+```
