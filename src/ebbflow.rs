@@ -8,6 +8,7 @@ use ebbflow::{
     hostname_or_die,
 };
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
+use log::LevelFilter;
 use regex::Regex;
 use reqwest::StatusCode;
 use std::io;
@@ -18,7 +19,6 @@ use std::{
     net::SocketAddrV4,
     sync::Arc,
 };
-use log::LevelFilter;
 
 const DEFAULT_SSH_CONNS: u16 = 10;
 const DEFAULT_SSH_IDLE: u16 = 3;
@@ -40,8 +40,8 @@ struct Opts {
 
 #[derive(Debug, Clap)]
 enum SubCommand {
-    /// Run the interactive initialization, retrieves a host key and sets up basic settings
-    Init,
+    /// Run the initialization, retrieves/sets the host key and sets up basic settings
+    Init(InitArgs),
     /// Configure the background daemon
     Config(ConfigSubCommand),
     /// Run the ebbflow proxy now, in a blocking fashion, without the daemon.
@@ -72,6 +72,15 @@ enum Config {
     RemoveSshConfiguration,
     /// Prints the current configuration (NOTE: Output subject to change)
     Print,
+}
+
+#[derive(Debug, Clap)]
+struct InitArgs {
+    /// Non interactive, you MUST provide the EBB_KEY environment variable!
+    /// At this time, no other config options are taken, you can change/set settings
+    /// with `ebbflow config SUBCOMMAND`.
+    #[clap(short, long)]
+    non_interactive: bool,
 }
 
 #[derive(Debug, Clap)]
@@ -193,8 +202,8 @@ impl From<ConfigError> for CliError {
         CliError::ConfigError(v)
     }
 }
-use clap::{AppSettings, derive::IntoApp};
 use clap::derive::FromArgMatches;
+use clap::{derive::IntoApp, AppSettings};
 
 #[tokio::main]
 async fn main() {
@@ -220,7 +229,7 @@ async fn main() {
             Config::SetupSsh(args) => setup_ssh(args).await,
             Config::RemoveSshConfiguration => remove_ssh().await,
         },
-        SubCommand::Init => init(&addr).await,
+        SubCommand::Init(args) => init(&addr, args).await,
         SubCommand::RunBlocking(args) => run_blocking(args).await,
     };
 
@@ -283,7 +292,37 @@ fn exiterror(s: &str) -> ! {
 }
 
 // Uses AccountId, creates a key, then prompts for endpoint/port combos and if SSH should be enabled
-async fn init(addr: &str) -> Result<(), CliError> {
+async fn init(addr: &str, args: InitArgs) -> Result<(), CliError> {
+    if args.non_interactive {
+        let key =
+            match std::env::var("EBB_KEY").ok() {
+                Some(k) => k,
+                None => return Err(CliError::Other(
+                    "Environment variable EBB_KEY not provided, required for non-interactive init"
+                        .to_owned(),
+                )),
+            };
+
+        let config = match EbbflowDaemonConfig::load_from_file().await {
+            Ok(mut e) => {
+                e.key = key;
+                e
+            }
+            Err(ConfigError::Empty) => EbbflowDaemonConfig {
+                ssh: None,
+                endpoints: vec![],
+                key,
+            },
+            Err(e) => return Err(e.into()),
+        };
+        config.save_to_file().await?;
+        Ok(())
+    } else {
+        init_interactive(addr).await
+    }
+}
+
+async fn init_interactive(addr: &str) -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
     let mut hostname = hostname_or_die();
 
