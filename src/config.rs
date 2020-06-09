@@ -1,4 +1,4 @@
-use crate::{key_file_full, config_file_full, hostname_or_die};
+use crate::{config_file_full, hostname_or_die, key_file_full};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use tokio::fs;

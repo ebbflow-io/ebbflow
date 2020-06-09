@@ -7,6 +7,7 @@ use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
+use config::getkey;
 use futures::future::BoxFuture;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -16,7 +17,6 @@ use std::sync::Arc;
 use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
-use config::getkey;
 
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
@@ -261,7 +261,9 @@ impl InnerDaemonRunner {
                 let newconfig = SshConfiguration {
                     port: newcfg.port,
                     max: newcfg.maxconns as usize,
-                    hostname: newcfg.hostname_override.unwrap_or_else(|| hostname_or_die()),
+                    hostname: newcfg
+                        .hostname_override
+                        .unwrap_or_else(|| hostname_or_die()),
                     enabled: newcfg.enabled,
                     maxidle: newcfg.maxidle as usize,
                 };

@@ -2,7 +2,7 @@
 extern crate log;
 
 use clap::{crate_version, Clap};
-use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh, setkey, getkey};
+use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::{
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
     hostname_or_die,
@@ -608,7 +608,11 @@ async fn printconfignokey() -> Result<(), CliError> {
     println!("-----------------");
 
     if let Some(sshcfg) = existing.ssh {
-        let max = sshcfg.hostname_override.clone().unwrap_or_else(|| hostname_or_die()).len();
+        let max = sshcfg
+            .hostname_override
+            .clone()
+            .unwrap_or_else(|| hostname_or_die())
+            .len();
         println!(
             "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
             "Hostname",
@@ -616,7 +620,9 @@ async fn printconfignokey() -> Result<(), CliError> {
         );
         println!(
             "{:width$}\t{}\t{}\t{}\t\t{}",
-            sshcfg.hostname_override.unwrap_or_else(|| hostname_or_die()),
+            sshcfg
+                .hostname_override
+                .unwrap_or_else(|| hostname_or_die()),
             sshcfg.port,
             sshcfg.enabled,
             sshcfg.maxconns,

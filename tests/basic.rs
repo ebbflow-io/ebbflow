@@ -7,7 +7,9 @@ mod basic_tests_v0 {
     use crate::mockebb::listen_and_process;
     use crate::mockebb::load_root;
     use ebbflow::{
-        config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh}, daemon::SharedInfo, run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
+        config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh},
+        daemon::SharedInfo,
+        run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
     };
     use futures::future::BoxFuture;
     use std::sync::Arc;
@@ -529,9 +531,7 @@ mod basic_tests_v0 {
             cfg,
             Box::pin(move || {
                 let cc = c.clone();
-                Box::pin(async move { 
-                    Ok((cc.lock().await.clone(), "asdf".to_string()))
-                })
+                Box::pin(async move { Ok((cc.lock().await.clone(), "asdf".to_string())) })
             }),
         )
     }

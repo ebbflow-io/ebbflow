@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use ebbflow::config::{ConfigError, EbbflowDaemonConfig, getkey};
+use ebbflow::config::{getkey, ConfigError, EbbflowDaemonConfig};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
@@ -221,7 +221,7 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 }
 
 pub fn config_reload() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>> {
-    Box::pin(async { 
+    Box::pin(async {
         let cfg = EbbflowDaemonConfig::load_from_file().await?;
         let key = getkey().await?;
         Ok((cfg, key))
