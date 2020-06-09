@@ -1,4 +1,4 @@
-use crate::config_file_full;
+use crate::{key_file_full, config_file_full, hostname_or_die};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use tokio::fs;
@@ -13,6 +13,18 @@ pub enum ConfigError {
     FilePermissions,
     Empty,
     Unknown(String),
+}
+
+pub async fn getkey() -> Result<String, ConfigError> {
+    let s = fs::read_to_string(key_file_full()).await?;
+    if s.is_empty() {
+        return Err(ConfigError::Empty);
+    }
+    Ok(s)
+}
+
+pub async fn setkey(k: &str) -> Result<(), ConfigError> {
+    Ok(fs::write(key_file_full(), k.as_bytes()).await?)
 }
 
 impl From<IoError> for ConfigError {
@@ -42,8 +54,6 @@ pub struct Empty {
 /// - TBD for Windows
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EbbflowDaemonConfig {
-    /// The value of the host's key, e.g. ebb_hst_1324123412341234123
-    pub key: String,
     /// A list of endpoints to host, see Endpoint
     pub endpoints: Vec<Endpoint>,
     /// SSH Config overrides, not needed
@@ -57,6 +67,7 @@ impl EbbflowDaemonConfig {
         let options = TokioOpenOptions::from(std);
 
         options.open(config_file_full()).await?;
+        options.open(key_file_full()).await?;
         Ok(())
     }
 
@@ -116,16 +127,16 @@ pub struct Ssh {
     /// the maxmimum amount of idle connections to Ebbflow, will be capped at X
     pub maxidle: u16,
     /// The hostname to use as the target, defaults the OS provided Hostname
-    pub hostname: String,
+    pub hostname_override: Option<String>,
 }
 
 impl Ssh {
-    pub fn new(enabled: bool, hostname: String) -> Ssh {
+    pub fn new(enabled: bool, hostname: Option<String>) -> Ssh {
         Self {
             maxconns: 20,
             port: 22,
             enabled,
-            hostname,
+            hostname_override: hostname,
             maxidle: 5,
         }
     }

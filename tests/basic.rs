@@ -7,8 +7,7 @@ mod basic_tests_v0 {
     use crate::mockebb::listen_and_process;
     use crate::mockebb::load_root;
     use ebbflow::{
-        config::ConfigError, config::EbbflowDaemonConfig, config::Endpoint, config::Ssh,
-        daemon::SharedInfo, run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
+        config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh}, daemon::SharedInfo, run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
     };
     use futures::future::BoxFuture;
     use std::sync::Arc;
@@ -147,11 +146,10 @@ mod basic_tests_v0 {
         let x = "testhostname.isawaseoma-fasdf.adf1".to_string();
 
         let cfg = EbbflowDaemonConfig {
-            key: "asdf".to_string(),
             endpoints: vec![],
             ssh: Some(Ssh {
                 port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
-                hostname: x,
+                hostname_override: Some(x),
                 enabled: true,
                 maxconns: 100,
                 maxidle: 2,
@@ -295,11 +293,10 @@ mod basic_tests_v0 {
 
         let hostname = "asdf31".to_string();
         let mut cfg = EbbflowDaemonConfig {
-            key: "asdf".to_string(),
             endpoints: vec![],
             ssh: Some(Ssh {
                 port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
-                hostname,
+                hostname_override: Some(hostname),
                 enabled: true,
                 maxconns: 100,
                 maxidle: 2,
@@ -402,7 +399,6 @@ mod basic_tests_v0 {
         let sshp = 131;
 
         let cfg = EbbflowDaemonConfig {
-            key: "asdf".to_string(),
             endpoints: vec![
                 Endpoint {
                     port: ep0,
@@ -422,9 +418,9 @@ mod basic_tests_v0 {
             ssh: Some(Ssh {
                 maxconns: 1,
                 port: sshp,
-                hostname: hn,
                 enabled: true,
                 maxidle: 1,
+                hostname_override: Some(hn),
             }),
         };
 
@@ -502,7 +498,6 @@ mod basic_tests_v0 {
 
     fn ezconfigendpoitnonly(port: u16) -> EbbflowDaemonConfig {
         EbbflowDaemonConfig {
-            key: "asdf".to_string(),
             endpoints: vec![Endpoint {
                 port,
                 dns: "ebbflow.io".to_string(),
@@ -520,7 +515,7 @@ mod basic_tests_v0 {
         Arc<Mutex<EbbflowDaemonConfig>>,
         std::pin::Pin<
             Box<
-                dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>
+                dyn Fn() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>>
                     + Send
                     + Sync
                     + 'static,
@@ -534,7 +529,9 @@ mod basic_tests_v0 {
             cfg,
             Box::pin(move || {
                 let cc = c.clone();
-                Box::pin(async move { Ok(cc.lock().await.clone()) })
+                Box::pin(async move { 
+                    Ok((cc.lock().await.clone(), "asdf".to_string()))
+                })
             }),
         )
     }

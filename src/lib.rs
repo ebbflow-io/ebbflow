@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
+use config::getkey;
 
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
@@ -43,7 +44,18 @@ pub fn config_file_full() -> String {
     format!("{}/{}", config_path_root(), CONFIG_FILE)
 }
 
+#[cfg(windows)]
+pub fn key_file_full() -> String {
+    format!("{}\\{}", config_path_root(), KEY_FILE)
+}
+
+#[cfg(not(windows))]
+pub fn key_file_full() -> String {
+    format!("{}/{}", config_path_root(), KEY_FILE)
+}
+
 pub const CONFIG_FILE: &str = "config.yaml";
+pub const KEY_FILE: &str = "host.key";
 pub const MAX_MAX_IDLE: usize = 100;
 
 pub mod certs;
@@ -136,9 +148,9 @@ impl DaemonRunner {
         }
     }
 
-    pub async fn update_config(&self, config: EbbflowDaemonConfig) {
+    pub async fn update_config(&self, config: EbbflowDaemonConfig, key: String) {
         let mut inner = self.inner.lock().await;
-        inner.update_config(config).await;
+        inner.update_config(config, key).await;
     }
 
     pub async fn status(&self) -> DaemonStatus {
@@ -164,10 +176,11 @@ impl InnerDaemonRunner {
         }
     }
 
-    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig) {
-        self.info.update_key(config.key);
+    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig, key: String) {
+        // Update the key
+        self.info.update_key(key);
 
-        // We do this so we can later info.key().unwrap().
+        // We do this so we can later info.key().unwrap(). (defense in depth)
         if self.info.key().is_none() {
             error!("ERROR: Unreachable state where we do not have a key to use, but do have an otherwise valid configuration");
             return;
@@ -248,7 +261,7 @@ impl InnerDaemonRunner {
                 let newconfig = SshConfiguration {
                     port: newcfg.port,
                     max: newcfg.maxconns as usize,
-                    hostname: newcfg.hostname,
+                    hostname: newcfg.hostname_override.unwrap_or_else(|| hostname_or_die()),
                     enabled: newcfg.enabled,
                     maxidle: newcfg.maxidle as usize,
                 };
@@ -338,7 +351,7 @@ pub async fn run_daemon(
     info: Arc<SharedInfo>,
     cfg_reload: Pin<
         Box<
-            dyn Fn() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>>
+            dyn Fn() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>>
                 + Send
                 + Sync
                 + 'static,
@@ -354,9 +367,9 @@ pub async fn run_daemon(
     tokio::spawn(async move {
         loop {
             match cfgrealoadfn().await {
-                Ok(newconfig) => {
+                Ok((newconfig, newkey)) => {
                     debug!("New config loaded successfully");
-                    runnerc.update_config(newconfig).await;
+                    runnerc.update_config(newconfig, newkey).await;
                     debug!("New config applied");
                 }
                 Err(e) => {

@@ -2,7 +2,7 @@
 extern crate log;
 
 use clap::{crate_version, Clap};
-use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
+use ebbflow::config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh, setkey, getkey};
 use ebbflow::{
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
     hostname_or_die,
@@ -303,19 +303,8 @@ async fn init(addr: &str, args: InitArgs) -> Result<(), CliError> {
                 )),
             };
 
-        let config = match EbbflowDaemonConfig::load_from_file().await {
-            Ok(mut e) => {
-                e.key = key;
-                e
-            }
-            Err(ConfigError::Empty) => EbbflowDaemonConfig {
-                ssh: None,
-                endpoints: vec![],
-                key,
-            },
-            Err(e) => return Err(e.into()),
-        };
-        config.save_to_file().await?;
+        setkey(&key).await?;
+
         Ok(())
     } else {
         init_interactive(addr).await
@@ -324,7 +313,7 @@ async fn init(addr: &str, args: InitArgs) -> Result<(), CliError> {
 
 async fn init_interactive(addr: &str) -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
-    let mut hostname = hostname_or_die();
+    let defaulthostname = hostname_or_die();
 
     println!(
         "Would you like to have the SSH proxy enabled for this host? Please type yes, y, no, or n"
@@ -341,8 +330,10 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
         );
     };
 
+    let mut hostname: Option<String> = None;
+
     let sshcfg = if enablessh {
-        println!("The hostname {} will be used to identify this host in the ebbflow proxy\ne.g. Clients will execute `ssh -J ebbflow.io {}`, is that ok?", hostname, hostname);
+        println!("The hostname {} will be used to identify this host in the ebbflow proxy\ne.g. Clients will execute `ssh -J ebbflow.io {}`, is that ok?", defaulthostname, defaulthostname);
         if !loop {
             let mut yn = String::new();
             io::stdin().read_line(&mut yn)?;
@@ -364,7 +355,7 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
                     println!("The provided name does not appear to be a valid hostname. Must be alphanumeric and only have periods or dashes (-).");
                 } else {
                     println!("The name {} will be used.", newhn);
-                    hostname = newhn.to_owned();
+                    hostname = Some(newhn.to_owned());
                     break;
                 }
             }
@@ -374,17 +365,20 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
         None
     };
 
-    let (url, finalizeme) = create_key_request(&hostname, addr).await?;
+    let usedname = hostname.unwrap_or_else(|| defaulthostname);
+
+    let (url, finalizeme) = create_key_request(&usedname, addr).await?;
     print_url_instructions(url);
 
     let key = poll_key_creation(finalizeme, addr).await?;
 
     println!("Great! The key has been provisioned.");
 
+    setkey(&key).await?;
+
     let cfg = EbbflowDaemonConfig {
         ssh: sshcfg,
         endpoints: vec![],
-        key,
     };
 
     cfg.save_to_file().await?;
@@ -551,30 +545,6 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-// async fn set_key(args: AddEndpointArgs) -> Result<(), CliError> {
-//     let newendpoint = Endpoint {
-//         port: args.local_port,
-//         dns: args.dns,
-//         maxconns: args.maxconns.unwrap_or(500),
-//         maxidle: args.maxidle.unwrap_or(10) as u16,
-//         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
-//         enabled: true,
-//     };
-
-//     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
-
-//     // make sure it doesn't exist
-//     for e in existing.endpoints.iter() {
-//         if e.dns == newendpoint.dns {
-//             exiterror(&format!("An endpoint of name {} already exists. Please remove it first then create it again", e.dns));
-//         }
-//     }
-//     // Doesn't exist, add it
-//     existing.endpoints.push(newendpoint);
-//     existing.save_to_file().await?;
-//     Ok(())
-// }
-
 async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
     let mut existing = EbbflowDaemonConfig::load_from_file().await?;
 
@@ -638,7 +608,7 @@ async fn printconfignokey() -> Result<(), CliError> {
     println!("-----------------");
 
     if let Some(sshcfg) = existing.ssh {
-        let max = sshcfg.hostname.len();
+        let max = sshcfg.hostname_override.clone().unwrap_or_else(|| hostname_or_die()).len();
         println!(
             "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
             "Hostname",
@@ -646,7 +616,7 @@ async fn printconfignokey() -> Result<(), CliError> {
         );
         println!(
             "{:width$}\t{}\t{}\t{}\t\t{}",
-            sshcfg.hostname,
+            sshcfg.hostname_override.unwrap_or_else(|| hostname_or_die()),
             sshcfg.port,
             sshcfg.enabled,
             sshcfg.maxconns,
@@ -674,7 +644,7 @@ async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
         maxconns: args.maxconns.unwrap_or(DEFAULT_SSH_CONNS),
         port: args.port.unwrap_or(22),
         enabled: true,
-        hostname: args.hostname.unwrap_or_else(hostname_or_die),
+        hostname_override: args.hostname,
         maxidle: idle,
     });
 
@@ -704,7 +674,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
         }
         None => {
             debug!("No key passed, trying cfg");
-            EbbflowDaemonConfig::load_from_file().await?.key
+            getkey().await?
         }
     };
 

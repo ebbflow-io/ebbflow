@@ -89,6 +89,14 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                         Source='assets\empty.config.yaml'
                         KeyPath='yes'
                         DiskId='1'>
+                        <Permission User="Everyone" GenericWrite="no" GenericRead="yes" />
+                        <Permission User="Administrators" GenericAll="yes" />
+                      </File>
+                      <File Id="KeyFile"
+                        Name="host.key"
+                        Source='assets\empty.key'
+                        KeyPath='yes'
+                        DiskId='1'>
                         <Permission User="Everyone" GenericAll="no" />
                         <Permission User="Administrators" GenericAll="yes" />
                       </File>

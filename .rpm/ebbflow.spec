@@ -45,4 +45,5 @@ rm -rf %{buildroot}
 %{_bindir}/*
 %{_sbindir}/*
 %{_unitdir}/ebbflowd.service
-%attr(0600,root,root) %config(noreplace) /etc/ebbflow/config.yaml
+%attr(0644,root,root) %config(noreplace) /etc/ebbflow/config.yaml
+%attr(0600,root,root) %config(noreplace) /etc/ebbflow/host.key

@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use ebbflow::config::{ConfigError, EbbflowDaemonConfig};
+use ebbflow::config::{ConfigError, EbbflowDaemonConfig, getkey};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
@@ -31,7 +31,7 @@ mod windows {
         service_dispatcher, Result,
     };
 
-    const SERVICE_NAME: &str = "ebbflowClientService2";
+    const SERVICE_NAME: &str = "ebbflowClientService";
     const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
     pub fn run() -> Result<()> {
@@ -220,6 +220,10 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
     Ok(())
 }
 
-pub fn config_reload() -> BoxFuture<'static, Result<EbbflowDaemonConfig, ConfigError>> {
-    Box::pin(async { EbbflowDaemonConfig::load_from_file().await })
+pub fn config_reload() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>> {
+    Box::pin(async { 
+        let cfg = EbbflowDaemonConfig::load_from_file().await?;
+        let key = getkey().await?;
+        Ok((cfg, key))
+    })
 }
