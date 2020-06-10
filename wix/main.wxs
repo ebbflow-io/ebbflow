@@ -92,6 +92,8 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                         <Permission User="Everyone" GenericAll="no" />
                         <Permission User="Administrators" GenericAll="yes" />
                       </File>
+                      </Component>
+                      <Component Id="host.key" Guid='*' Win64='$(var.Win64)' NeverOverwrite='yes'>
                       <File Id="KeyFile"
                         Name="host.key"
                         Source='assets\empty.key'
@@ -184,6 +186,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
             <ComponentRef Id='License'/>
             <ComponentRef Id='binary0'/>
             <ComponentRef Id='conf.yaml'/>
+            <ComponentRef Id='host.key'/>
             <ComponentRef Id='EbbflowClientService'/>
 
             <Feature
