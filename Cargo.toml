@@ -1,6 +1,6 @@
 [package]
 name = "ebbflow"
-version = "0.5.22"
+version = "0.5.23"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"

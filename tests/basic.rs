@@ -517,8 +517,10 @@ mod basic_tests_v0 {
         Arc<Mutex<EbbflowDaemonConfig>>,
         std::pin::Pin<
             Box<
-                dyn Fn() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>>
-                    + Send
+                dyn Fn() -> BoxFuture<
+                        'static,
+                        Result<(EbbflowDaemonConfig, Option<String>), ConfigError>,
+                    > + Send
                     + Sync
                     + 'static,
             >,
@@ -531,7 +533,7 @@ mod basic_tests_v0 {
             cfg,
             Box::pin(move || {
                 let cc = c.clone();
-                Box::pin(async move { Ok((cc.lock().await.clone(), "asdf".to_string())) })
+                Box::pin(async move { Ok((cc.lock().await.clone(), Some("asdf".to_string()))) })
             }),
         )
     }

@@ -1,7 +1,9 @@
 #[macro_use]
 extern crate log;
 
-use ebbflow::config::{getkey, ConfigError, EbbflowDaemonConfig};
+use ebbflow::config::{
+    config_file_full, config_path_root, getkey, key_file_full, ConfigError, EbbflowDaemonConfig,
+};
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
@@ -195,7 +197,7 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
-    if let Err(e) = watcher.watch(ebbflow::config_path_root(), RecursiveMode::Recursive) {
+    if let Err(e) = watcher.watch(config_path_root(), RecursiveMode::Recursive) {
         return Err(format!(
             "Unable to set file event configuration options {:?}",
             e
@@ -220,10 +222,23 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
     Ok(())
 }
 
-pub fn config_reload() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>> {
+pub fn config_reload(
+) -> BoxFuture<'static, Result<(EbbflowDaemonConfig, Option<String>), ConfigError>> {
     Box::pin(async {
+        debug!("Will read config file, {}", config_file_full());
         let cfg = EbbflowDaemonConfig::load_from_file().await?;
-        let key = getkey().await?;
+        debug!(
+            "Config file parsed successfully, now trying key file {}",
+            key_file_full()
+        );
+        let key = match getkey().await {
+            Ok(k) => Some(k),
+            Err(e) => match e {
+                ConfigError::Empty | ConfigError::FileNotFound => None,
+                _ => return Err(e),
+            },
+        };
+        debug!("Found key: {}", key.is_some());
         Ok((cfg, key))
     })
 }

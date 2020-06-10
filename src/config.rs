@@ -1,10 +1,48 @@
-use crate::{config_file_full, key_file_full};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use tokio::fs;
 use tokio::fs::OpenOptions as TokioOpenOptions;
 use tokio::io::Error as IoError;
 use tokio::io::ErrorKind;
+
+// Path to the Config file, see EbbflowDaemonConfig in the config module.
+#[cfg(target_os = "linux")]
+lazy_static! {
+    pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
+}
+#[cfg(target_os = "macos")]
+pub const CONFIG_PATH: &str = "/usr/local/etc/ebbflow";
+#[cfg(windows)]
+lazy_static! {
+    pub static ref CONFIG_PATH: String = { "\\Program Files\\ebbflow".to_string() };
+}
+
+pub fn config_path_root() -> String {
+    CONFIG_PATH.to_string()
+}
+
+#[cfg(windows)]
+pub fn config_file_full() -> String {
+    format!("{}\\{}", config_path_root(), CONFIG_FILE)
+}
+
+#[cfg(not(windows))]
+pub fn config_file_full() -> String {
+    format!("{}/{}", config_path_root(), CONFIG_FILE)
+}
+
+#[cfg(windows)]
+pub fn key_file_full() -> String {
+    format!("{}\\{}", config_path_root(), KEY_FILE)
+}
+
+#[cfg(not(windows))]
+pub fn key_file_full() -> String {
+    format!("{}/{}", config_path_root(), KEY_FILE)
+}
+
+pub const CONFIG_FILE: &str = "config.yaml";
+pub const KEY_FILE: &str = "host.key";
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -43,11 +81,6 @@ impl From<IoError> for ConfigError {
 pub enum PossiblyEmptyEbbflowDaemonConfig {
     Empty,
     EbbflowDaemonConfig(EbbflowDaemonConfig),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Empty {
-    pub empty: bool,
 }
 
 /// Configuration for Ebbflow. Will be parsed to/from a YAML file located at

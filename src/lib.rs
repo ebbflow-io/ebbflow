@@ -17,44 +17,6 @@ use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-// Path to the Config file, see EbbflowDaemonConfig in the config module.
-#[cfg(target_os = "linux")]
-lazy_static! {
-    pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
-}
-#[cfg(target_os = "macos")]
-pub const CONFIG_PATH: &str = "/usr/local/etc/ebbflow";
-#[cfg(windows)]
-lazy_static! {
-    pub static ref CONFIG_PATH: String = { "\\Program Files\\ebbflow".to_string() };
-}
-
-pub fn config_path_root() -> String {
-    CONFIG_PATH.to_string()
-}
-
-#[cfg(windows)]
-pub fn config_file_full() -> String {
-    format!("{}\\{}", config_path_root(), CONFIG_FILE)
-}
-
-#[cfg(not(windows))]
-pub fn config_file_full() -> String {
-    format!("{}/{}", config_path_root(), CONFIG_FILE)
-}
-
-#[cfg(windows)]
-pub fn key_file_full() -> String {
-    format!("{}\\{}", config_path_root(), KEY_FILE)
-}
-
-#[cfg(not(windows))]
-pub fn key_file_full() -> String {
-    format!("{}/{}", config_path_root(), KEY_FILE)
-}
-
-pub const CONFIG_FILE: &str = "config.yaml";
-pub const KEY_FILE: &str = "host.key";
 pub const MAX_MAX_IDLE: usize = 100;
 
 pub mod certs;
@@ -147,7 +109,7 @@ impl DaemonRunner {
         }
     }
 
-    pub async fn update_config(&self, config: EbbflowDaemonConfig, key: String) {
+    pub async fn update_config(&self, config: EbbflowDaemonConfig, key: Option<String>) {
         let mut inner = self.inner.lock().await;
         inner.update_config(config, key).await;
     }
@@ -175,13 +137,15 @@ impl InnerDaemonRunner {
         }
     }
 
-    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig, key: String) {
+    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig, key: Option<String>) {
         // Update the key
-        self.info.update_key(key);
+        if let Some(k) = key {
+            self.info.update_key(k);
+        }
 
         // We do this so we can later info.key().unwrap(). (defense in depth)
         if self.info.key().is_none() {
-            error!("ERROR: Unreachable state where we do not have a key to use, but do have an otherwise valid configuration");
+            error!("ERROR: Valid configuration found, but key not set, doing nothing");
             return;
         }
         self.statusmeta = DaemonStatusMeta::Good;
@@ -352,7 +316,8 @@ pub async fn run_daemon(
     info: Arc<SharedInfo>,
     cfg_reload: Pin<
         Box<
-            dyn Fn() -> BoxFuture<'static, Result<(EbbflowDaemonConfig, String), ConfigError>>
+            dyn Fn()
+                    -> BoxFuture<'static, Result<(EbbflowDaemonConfig, Option<String>), ConfigError>>
                 + Send
                 + Sync
                 + 'static,
