@@ -1,4 +1,4 @@
-use crate::{config_file_full, hostname_or_die, key_file_full};
+use crate::{config_file_full, key_file_full};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use tokio::fs;
@@ -20,11 +20,12 @@ pub async fn getkey() -> Result<String, ConfigError> {
     if s.is_empty() {
         return Err(ConfigError::Empty);
     }
-    Ok(s)
+
+    Ok(s.trim().to_string())
 }
 
 pub async fn setkey(k: &str) -> Result<(), ConfigError> {
-    Ok(fs::write(key_file_full(), k.as_bytes()).await?)
+    Ok(fs::write(key_file_full(), k.trim().as_bytes()).await?)
 }
 
 impl From<IoError> for ConfigError {
@@ -69,6 +70,20 @@ impl EbbflowDaemonConfig {
         options.open(config_file_full()).await?;
         options.open(key_file_full()).await?;
         Ok(())
+    }
+
+    pub async fn load_from_file_or_new() -> Result<EbbflowDaemonConfig, ConfigError> {
+        let cfg = match Self::load_from_file().await {
+            Ok(existing) => existing,
+            Err(e) => match e {
+                ConfigError::Empty | ConfigError::FileNotFound => EbbflowDaemonConfig {
+                    endpoints: vec![],
+                    ssh: None,
+                },
+                _ => return Err(e),
+            },
+        };
+        Ok(cfg)
     }
 
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {

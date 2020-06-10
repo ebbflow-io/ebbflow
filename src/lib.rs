@@ -7,7 +7,6 @@ use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
-use config::getkey;
 use futures::future::BoxFuture;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

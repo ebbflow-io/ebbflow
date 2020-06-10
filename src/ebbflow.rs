@@ -241,7 +241,7 @@ async fn main() {
                 ConfigError::FileNotFound => exiterror("Expected configuration file not found, has initialization occurred yet?"),
                 ConfigError::Parsing => exiterror("Failed to parse configuration properly, please notify Ebbflow"),
                 ConfigError::Unknown(s) => exiterror(&format!("Unexpected error: {}, Please notify Ebbflow", s)),
-                ConfigError::Empty => exiterror("The configuration file is empty, please run initialization (ebbflow init) first"),
+                ConfigError::Empty => exiterror("The configuration file is empty"),
             }
             CliError::StdIoError(_e) => exiterror("Issue reading or writing to/from stdin or out, weird!"),
             CliError::Http(e) => exiterror(&format!("Problem making HTTP request to Ebbflow, please try again soon. For debugging: {:?}", e)),
@@ -478,7 +478,7 @@ async fn enabledisable(enable: bool, args: &EnableDisableTarget) -> Result<(bool
 }
 
 async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(bool, bool), CliError> {
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
 
     let mut targeted_found = false;
     let mut mutated = false;
@@ -506,7 +506,7 @@ async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(bool,
 }
 
 async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
     let ret = if let Some(ref mut ssh) = &mut existing.ssh {
         if ssh.enabled == enabled {
             (true, false)
@@ -531,7 +531,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
         enabled: true,
     };
 
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
 
     // make sure it doesn't exist
     for e in existing.endpoints.iter() {
@@ -546,7 +546,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
 }
 
 async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
 
     let mut deleted = false;
     // make sure it doesn't exist
@@ -574,7 +574,7 @@ async fn remove_endpoint(args: RemoveEndpointArgs) -> Result<(), CliError> {
 }
 
 async fn printconfignokey() -> Result<(), CliError> {
-    let existing = EbbflowDaemonConfig::load_from_file().await?;
+    let existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
     println!("Endpoint Configuration");
     println!("----------------------");
 
@@ -637,7 +637,7 @@ async fn printconfignokey() -> Result<(), CliError> {
 }
 
 async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
     if let Some(_existing) = existing.ssh {
         exiterror("SSH configuration already set up, please remove it and then recreate it");
     }
@@ -659,7 +659,7 @@ async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
 }
 
 async fn remove_ssh() -> Result<(), CliError> {
-    let mut existing = EbbflowDaemonConfig::load_from_file().await?;
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
     existing.ssh = None;
     existing.save_to_file().await?;
     Ok(())
