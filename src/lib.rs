@@ -177,7 +177,7 @@ impl InnerDaemonRunner {
                     let current_instance = oe.get_mut();
 
                     if current_instance.existing_config == endpoint {
-                        trace!(
+                        debug!(
                             "Configuration for an endpoint did not change, doing nothing {}",
                             endpoint.dns
                         );
@@ -210,9 +210,13 @@ impl InnerDaemonRunner {
                 }
                 Entry::Vacant(ve) => {
                     debug!("Configuration for an endpoint that did NOT previously exist found, will create it {}", endpoint.dns);
-                    let sender = spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
+                    let enabledisable =  if endpoint.enabled {
+                        EnabledDisabled::Enabled(spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await)
+                    } else {
+                        EnabledDisabled::Disabled
+                    };
                     ve.insert(EndpointInstance {
-                        enabledisable: EnabledDisabled::Enabled(sender),
+                        enabledisable,
                         existing_config: endpoint,
                     });
                 }

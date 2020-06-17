@@ -184,6 +184,77 @@ mod basic_tests_v0 {
         assert_eq!(readme[..], writeme[..]);
     }
 
+     #[tokio::test]
+    async fn endpoint_start_disabled_fails_then_enable_works() {
+        // logger();
+        let testclientport = 49543;
+        let customerport = 49544;
+        let serverport = 49545;
+
+        tokio::spawn(listen_and_process(customerport, testclientport));
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned ebb");
+
+        let mut initial_endpoint = ezconfigendpoitnonly(serverport as u16);
+        initial_endpoint.endpoints.get_mut(0).unwrap().enabled = false;
+
+        let (notify, arcmutex, _) =
+            start_basic_daemon(testclientport, initial_endpoint).await;
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned daemon");
+
+        let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
+        info!("Spawned server early that should return successfully later");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        
+        // We should not be able to connect
+        let should_err = {
+            match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {
+                Ok(mut s) => {
+                    info!("Connected Client");
+                    tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+                    // We should be disconnected soon, or not be able to write
+                    let _r = s.write(&[0; 4][..]).await;
+                    info!("Wrote Customer Stuff");
+                    let mut buf = vec![0; 10];
+                    let r = s.read(&mut buf[..]).await;
+                    info!("Read Customer Stuff {:?}", r);
+                    if let Ok(0) = r {
+                        Err(std::io::Error::from(std::io::ErrorKind::NotConnected))
+                    } else {
+                        r
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        };
+        assert!(should_err.is_err());
+
+        let mut cfg = ezconfigendpoitnonly(serverport as u16);
+        cfg.endpoints.get_mut(0).unwrap().enabled = true;
+        {
+            let mut x = arcmutex.lock().await;
+            *x = cfg;
+        }
+        notify.notify();
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY * 2).await;
+
+        // at this point, we have the customer conn and server conn, let's send some bytes.
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
+        info!("Connected Client that should succeed");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        let mut server = serverconnhandle.await.unwrap().unwrap(); // we spawned ONE Accept thing earlier, it should have NOT resolved and only NOW resolves once we connect again
+        let writeme: [u8; 10212] = [5; 10212];
+        customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff should succeed");
+        let mut readme: [u8; 10212] = [0; 10212];
+        server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff should succeed");
+        assert_eq!(readme[..], writeme[..]);
+    }
+
     #[tokio::test]
     async fn endpoint_start_enabled_disable_reenable() {
         // logger();
@@ -385,6 +456,85 @@ mod basic_tests_v0 {
         let mut readme: [u8; 10212] = [0; 10212];
         server.read_exact(&mut readme[..]).await.unwrap();
         info!("Read Server Stuff III");
+        assert_eq!(readme[..], writeme[..]);
+    }
+
+    #[tokio::test]
+    async fn ssh_start_disabled_fails_then_enable_works() {
+        // logger();
+        let testclientport = 49443;
+        let customerport = 49444;
+        let serverport = 49445;
+
+        tokio::spawn(listen_and_process(customerport, testclientport));
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned ebb");
+
+        let hostname = "asdf31".to_string();
+        let mut cfg = EbbflowDaemonConfig {
+            endpoints: vec![],
+            ssh: Some(Ssh {
+                port: serverport, // We need to override the SSH port or else it will hit the actual ssh server the host
+                hostname_override: Some(hostname),
+                enabled: false,
+                maxconns: 100,
+                maxidle: 2,
+            }),
+        };
+
+        let (notify, arcmutex, _) =
+            start_basic_daemon(testclientport, cfg.clone()).await;
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned daemon");
+
+        let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport as usize));
+        info!("Spawned server early that should return successfully later");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        
+        // We should not be able to connect
+        let should_err = {
+            match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {
+                Ok(mut s) => {
+                    info!("Connected Client");
+                    tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+                    // We should be disconnected soon, or not be able to write
+                    let _r = s.write(&[0; 4][..]).await;
+                    info!("Wrote Customer Stuff");
+                    let mut buf = vec![0; 10];
+                    let r = s.read(&mut buf[..]).await;
+                    info!("Read Customer Stuff {:?}", r);
+                    if let Ok(0) = r {
+                        Err(std::io::Error::from(std::io::ErrorKind::NotConnected))
+                    } else {
+                        r
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        };
+        assert!(should_err.is_err());
+
+        cfg.ssh.as_mut().unwrap().enabled = true;
+        {
+            let mut x = arcmutex.lock().await;
+            *x = cfg;
+        }
+        notify.notify();
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY * 2).await;
+
+        // at this point, we have the customer conn and server conn, let's send some bytes.
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
+        info!("Connected Client that should succeed");
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        let mut server = serverconnhandle.await.unwrap().unwrap(); // we spawned ONE Accept thing earlier, it should have NOT resolved and only NOW resolves once we connect again
+        let writeme: [u8; 10212] = [5; 10212];
+        customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff should succeed");
+        let mut readme: [u8; 10212] = [0; 10212];
+        server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff should succeed");
         assert_eq!(readme[..], writeme[..]);
     }
 
