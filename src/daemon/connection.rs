@@ -172,7 +172,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
         },
         _ => return Err(ConnectionError::UnexpectedMessage),
     }
-    debug!("Connection handshake complete, awaitng TrafficStart");
+    debug!("Awaiting TrafficStart ({})", args.endpoint);
 
     // Await Connection
     let mut stream = match futures::future::select(
@@ -194,7 +194,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
     let local = match connect_local(args.local_addr).await {
         Ok(localstream) => {
             trace!(
-                "Connected to local address {:?} for endpoint {}",
+                "Connected to local addr {:?} for {}",
                 args.local_addr,
                 args.endpoint
             );
@@ -204,7 +204,7 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
         }
         Err(e) => {
             info!(
-                "Error connecting to local address {:?} for endpoint {} {:?}",
+                "Error connecting to local addr {:?} for {} {:?}",
                 args.local_addr, args.endpoint, e
             );
             let response = starttrafficresponse(false)?;

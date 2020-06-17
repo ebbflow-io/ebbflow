@@ -83,8 +83,8 @@ impl SharedInfo {
         }
         let ips = self.dns.ips(EBBFLOW_DNS).await.unwrap_or_else(|_| {
             vec![
-                "75.2.123.22".parse().unwrap(),
-                "99.83.172.111".parse().unwrap(),
+                "75.2.87.195".parse().unwrap(),
+                "99.83.181.168".parse().unwrap(),
             ]
         }); // TODO: Update fallbacks
 
@@ -183,7 +183,7 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, mut args: EndpointArgs) -> Ar
             Either::Left(_) => {
                 tokio::time::delay_for(POST_CANCEL_DELAY).await;
                 debug!(
-                    "Endpoint runner told to stop {}, {:?} later current i{} a{}",
+                    "Endpoint {} told to stop, {:?} later current i{} a{}",
                     e,
                     POST_CANCEL_DELAY,
                     metac2.num_idle(),
@@ -227,7 +227,7 @@ async fn inner_run_endpoint(
         let receiverc = receiver.clone();
         let args = create_args(&info, &args, ccfg.clone()).await;
         debug!(
-            "A new connection to ebbflow will be established for endpoint {} (localaddr: {:?})",
+            "Creating new connection for {} (localaddr: {:?})",
             args.endpoint, args.local_addr
         );
         let m = meta.clone();

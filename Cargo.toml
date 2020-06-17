@@ -1,6 +1,6 @@
 [package]
 name = "ebbflow"
-version = "0.5.24"
+version = "0.5.26"
 authors = ["Ryan Gorup <gorup@users.noreply.github.com>"]
 edition = "2018"
 readme = "README.md"
@@ -63,7 +63,7 @@ A command line utility for proxying data to Ebbflow (see https://ebbflow.io)."""
 priority = "optional"
 section = "net"
 depends = "$auto"
-conf-files = ["/etc/ebbflow/config.yaml"]
+conf-files = ["/etc/ebbflow/config.yaml", "/etc/ebbflow/host.key"]
 maintainer-scripts="assets/debian"
 assets = [
     ["assets/ebbflowd.service", "/lib/systemd/system/ebbflowd.service", "644"],
