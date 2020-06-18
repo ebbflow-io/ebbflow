@@ -17,13 +17,16 @@ impl DnsResolver {
         opts.positive_max_ttl = Some(TTL);
         opts.negative_max_ttl = Some(TTL);
 
-        let group = NameServerConfigGroup::from_ips_clear(&[
-            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
-            IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)),
-            IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
-            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
-            IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
-        ], 53);
+        let group = NameServerConfigGroup::from_ips_clear(
+            &[
+                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+                IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)),
+                IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
+                IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+                IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
+            ],
+            53,
+        );
         let config = ResolverConfig::from_parts(None, vec![], group);
 
         let r = TokioAsyncResolver::tokio(config, opts)

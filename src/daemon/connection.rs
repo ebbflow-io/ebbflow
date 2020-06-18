@@ -170,7 +170,11 @@ async fn establish_ebbflow_connection_and_await_traffic_signal(
         },
         _ => return Err(ConnectionError::UnexpectedMessage),
     }
-    debug!("Awaiting TrafficStart ({}) {:#?}", args.endpoint, Instant::now());
+    debug!(
+        "Awaiting TrafficStart ({}) {:#?}",
+        args.endpoint,
+        Instant::now()
+    );
 
     // Await Connection
     let stream = match futures::future::select(
@@ -189,7 +193,10 @@ async fn establish_ebbflow_connection_and_await_traffic_signal(
     Ok(stream)
 }
 
-async fn connect_local_with_ebbflow_communication(mut stream: TlsStream<TcpStream>, args: &EndpointConnectionArgs) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
+async fn connect_local_with_ebbflow_communication(
+    mut stream: TlsStream<TcpStream>,
+    args: &EndpointConnectionArgs,
+) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     let now = Instant::now();
     // Traffic start, connect local real quick
     let local = match connect_local(args.local_addr).await {

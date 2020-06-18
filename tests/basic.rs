@@ -184,7 +184,7 @@ mod basic_tests_v0 {
         assert_eq!(readme[..], writeme[..]);
     }
 
-     #[tokio::test]
+    #[tokio::test]
     async fn endpoint_start_disabled_fails_then_enable_works() {
         // logger();
         let testclientport = 49543;
@@ -198,15 +198,14 @@ mod basic_tests_v0 {
         let mut initial_endpoint = ezconfigendpoitnonly(serverport as u16);
         initial_endpoint.endpoints.get_mut(0).unwrap().enabled = false;
 
-        let (notify, arcmutex, _) =
-            start_basic_daemon(testclientport, initial_endpoint).await;
+        let (notify, arcmutex, _) = start_basic_daemon(testclientport, initial_endpoint).await;
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
         info!("Spawned server early that should return successfully later");
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
-        
+
         // We should not be able to connect
         let should_err = {
             match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {
@@ -482,15 +481,14 @@ mod basic_tests_v0 {
             }),
         };
 
-        let (notify, arcmutex, _) =
-            start_basic_daemon(testclientport, cfg.clone()).await;
+        let (notify, arcmutex, _) = start_basic_daemon(testclientport, cfg.clone()).await;
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
         info!("Spawned daemon");
 
         let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport as usize));
         info!("Spawned server early that should return successfully later");
         tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
-        
+
         // We should not be able to connect
         let should_err = {
             match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {

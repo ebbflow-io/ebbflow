@@ -210,8 +210,10 @@ impl InnerDaemonRunner {
                 }
                 Entry::Vacant(ve) => {
                     debug!("Configuration for an endpoint that did NOT previously exist found, will create it {}", endpoint.dns);
-                    let enabledisable =  if endpoint.enabled {
-                        EnabledDisabled::Enabled(spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await)
+                    let enabledisable = if endpoint.enabled {
+                        EnabledDisabled::Enabled(
+                            spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await,
+                        )
                     } else {
                         EnabledDisabled::Disabled
                     };
