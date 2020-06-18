@@ -74,21 +74,26 @@ pub async fn run_connection(
     meta: Arc<super::EndpointMeta>,
 ) {
     meta.add_idle();
-    let r = timeout(
+    let getstreamresult = timeout(
         MAX_IDLE_CONNETION_TIME,
-        establish_ebbflow_connection_and_connect_locally_when_told_to(receiver.clone(), &args),
+        establish_ebbflow_connection_and_await_traffic_signal(receiver.clone(), &args),
     )
     .await;
+
+    // Important: Release any idle connections ASAP so we can start another connection
+    debug!("Dropping idle permit {:#?}", Instant::now());
     meta.remove_idle();
-    let (ebbstream, localtcp, now) = match r {
-        Ok(Ok(x)) => {
-            trace!("A connection finished gracefully");
-            // VVVVVV IMPORTANT: We drop the semaphore now that we have a connection!! This is because the semaphore counts
-            // IDLE connections, not total, so lets drop the permit to allow another idle conn to start up
-            drop(idle_permit);
-            x
-        }
-        Ok(Err(e)) => {
+    drop(idle_permit);
+
+    let local_connection_result = match getstreamresult {
+        Ok(Ok(stream)) => connect_local_with_ebbflow_communication(stream, &args).await,
+        Ok(Err(e)) => Err(e),
+        Err(_e) => Err(ConnectionError::Timeout("Timed out connecting to Ebbflow")),
+    };
+
+    let (ebbstream, localtcp, now) = match local_connection_result {
+        Ok(triple) => triple,
+        Err(e) => {
             match e {
                 ConnectionError::Forbidden
                 | ConnectionError::NotFound
@@ -113,13 +118,6 @@ pub async fn run_connection(
             jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
             return;
         }
-        Err(_e) => {
-            trace!(
-                "A connection was idle for {:?} so it was terminated and we will retry",
-                MAX_IDLE_CONNETION_TIME
-            );
-            return;
-        }
     };
     trace!(
         "Connection handshake complete and a local connection has been established, proxying data"
@@ -140,10 +138,10 @@ pub async fn run_connection(
 /// This waits for a connection to Ebbflow, and only returns with a valid connection to the local server.
 ///
 /// Specifically, this will inform Ebbflow if the local connection is ready or not after it connects locally.
-async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
+async fn establish_ebbflow_connection_and_await_traffic_signal(
     mut receiver: SignalReceiver,
     args: &EndpointConnectionArgs,
-) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
+) -> Result<TlsStream<TcpStream>, ConnectionError> {
     // Connect to Ebbflow
     let mut tlsstream = connect_ebbflow(args).await?;
 
@@ -172,10 +170,10 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
         },
         _ => return Err(ConnectionError::UnexpectedMessage),
     }
-    debug!("Awaiting TrafficStart ({})", args.endpoint);
+    debug!("Awaiting TrafficStart ({}) {:#?}", args.endpoint, Instant::now());
 
     // Await Connection
-    let mut stream = match futures::future::select(
+    let stream = match futures::future::select(
         receiverfut,
         Box::pin(async move { await_traffic_start(tlsstream).await }), // No timeout, as the connection can be idle for a while
     )
@@ -188,7 +186,10 @@ async fn establish_ebbflow_connection_and_connect_locally_when_told_to(
         }
         Either::Right((readresult, _r)) => readresult?,
     };
+    Ok(stream)
+}
 
+async fn connect_local_with_ebbflow_communication(mut stream: TlsStream<TcpStream>, args: &EndpointConnectionArgs) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     let now = Instant::now();
     // Traffic start, connect local real quick
     let local = match connect_local(args.local_addr).await {

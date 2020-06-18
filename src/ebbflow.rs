@@ -695,7 +695,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
         EndpointArgs {
             ctype: EndpointConnectionType::Tls,
             idleconns: args.maxidle.unwrap_or(10) as usize,
-            maxconns: args.maxidle.unwrap_or(10_000) as usize,
+            maxconns: args.maxconns.unwrap_or(5_000) as usize,
             endpoint: args.dns,
             local_addr: addr,
         },

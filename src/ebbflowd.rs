@@ -139,7 +139,7 @@ mod windows {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Warn)
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 

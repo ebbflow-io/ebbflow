@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use trust_dns_resolver::config::NameServerConfigGroup;
 use trust_dns_resolver::config::ResolverConfig;
 use trust_dns_resolver::config::ResolverOpts;
@@ -8,8 +8,8 @@ pub struct DnsResolver {
     trust: TokioAsyncResolver,
 }
 use std::time::Duration;
-const TIMEOUT: Duration = Duration::from_secs(8);
-const TTL: Duration = Duration::from_secs(60 * 5);
+const TIMEOUT: Duration = Duration::from_secs(1);
+const TTL: Duration = Duration::from_secs(60 * 60);
 
 impl DnsResolver {
     pub async fn new() -> Result<Self, ()> {
@@ -17,9 +17,13 @@ impl DnsResolver {
         opts.positive_max_ttl = Some(TTL);
         opts.negative_max_ttl = Some(TTL);
 
-        let mut group = NameServerConfigGroup::cloudflare();
-        group.merge(NameServerConfigGroup::google());
-        group.merge(NameServerConfigGroup::quad9());
+        let group = NameServerConfigGroup::from_ips_clear(&[
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
+        ], 53);
         let config = ResolverConfig::from_parts(None, vec![], group);
 
         let r = TokioAsyncResolver::tokio(config, opts)

@@ -17,7 +17,7 @@ use std::{net::Ipv4Addr, pin::Pin};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
-pub const MAX_MAX_IDLE: usize = 100;
+pub const MAX_MAX_IDLE: usize = 1000;
 
 pub mod certs;
 pub mod config;
