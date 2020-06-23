@@ -160,6 +160,7 @@ impl InnerDaemonRunner {
 
         // We do this so we can later info.key().unwrap(). (defense in depth)
         if self.info.key().is_none() {
+            self.statusmeta = DaemonStatusMeta::Uninitialized;
             let e = "ERROR: Valid configuration found, but key not set, doing nothing";
             self.submit_error_message(e.to_string());
             error!("{}", e);
