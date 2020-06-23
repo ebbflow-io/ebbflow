@@ -7,7 +7,7 @@ use ebbflow::config::{
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
-use ebbflow::signal::SignalSender;
+use ebbflow::{certs::ROOTS, signal::SignalSender};
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Arc;
@@ -203,11 +203,24 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
             e
         ));
     }
+    
 
-    let sharedinfo = Arc::new(match SharedInfo::new().await {
-        Ok(x) => x,
-        Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
-    });
+    let sharedinfo = match (std::env::var("UNSTABLE_EBB_ADDR").ok(), std::env::var("UNSTABLE_EBB_DNS").ok()) {
+        (Some(addr), Some(dns)) => {
+            let addr = match addr.parse() {
+                Ok(x) => x,
+                Err(e) => return Err(format!("Error creating ipv4 addr from overriden value {} {:?}", addr, e)),
+            };
+            Arc::new(match SharedInfo::new_with_ebbflow_overrides(addr, dns.to_string(), ROOTS.clone()).await {
+                Ok(x) => x,
+                Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+            })
+        } 
+        _ => Arc::new(match SharedInfo::new().await {
+            Ok(x) => x,
+            Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+        }),
+    };
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), notify).await;
 

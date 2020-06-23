@@ -79,21 +79,11 @@ pub async fn run_connection(
         establish_ebbflow_connection_and_await_traffic_signal(receiver.clone(), &args),
     )
     .await;
-
     // Important: Release any idle connections ASAP so we can start another connection
-    debug!("Dropping idle permit {:#?}", Instant::now());
-    meta.remove_idle();
-    drop(idle_permit);
 
-    let local_connection_result = match getstreamresult {
-        Ok(Ok(stream)) => connect_local_with_ebbflow_communication(stream, &args).await,
-        Ok(Err(e)) => Err(e),
-        Err(_e) => Err(ConnectionError::Timeout("Timed out connecting to Ebbflow")),
-    };
-
-    let (ebbstream, localtcp, now) = match local_connection_result {
-        Ok(triple) => triple,
-        Err(e) => {
+    let stream = match getstreamresult {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
             match e {
                 ConnectionError::Forbidden
                 | ConnectionError::NotFound
@@ -106,14 +96,31 @@ pub async fn run_connection(
                     jittersleep1p5(BAD_ERROR_DELAY).await;
                     // We should sleep to avoid spamming, as NotFound and Forbidden errors
                     // are unlikely to be resolved anytime soon.
-                }
-                _ => {
-                    debug!(
-                        "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
-                        args.endpoint, e
-                    );
-                }
+                    }
+                    _ => {
+                        debug!(
+                            "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
+                            args.endpoint, e
+                        );
+                    }
             }
+            trace!("Minimum Delay");
+            jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
+
+            return;
+        },
+        Err(_e) => {
+            debug!("Timed out connecting to Ebbflow {:?}", MAX_IDLE_CONNETION_TIME);
+            return;
+        }
+    };
+    debug!("Dropping idle permit {:#?}", Instant::now());
+    meta.remove_idle();
+    drop(idle_permit);
+
+    let (ebbstream, localtcp, now) = match connect_local_with_ebbflow_communication(stream, &args).await {
+        Ok(triple) => triple,
+        Err(_e) => {
             trace!("Minimum Delay");
             jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
             return;

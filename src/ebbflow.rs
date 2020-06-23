@@ -5,7 +5,7 @@ use clap::{crate_version, Clap};
 use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::{
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
-    hostname_or_die,
+    hostname_or_die, certs::ROOTS,
 };
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use log::LevelFilter;
@@ -98,6 +98,13 @@ struct RunBlockingArgs {
     /// Log level. Debug, Info, Warn (Default), NOTE: Output is subject to change!!
     #[clap(long)]
     loglevel: Option<LevelFilter>,
+
+    /// This allows you to override the DNS value used to connect to Ebbflow, addr is required as well
+    #[clap(long, hidden=true)]
+    ebbflow_dns: Option<String>,
+    /// This allows you to override the IP address of Ebbflow, dns is required as well
+    #[clap(long, hidden=true)]
+    ebbflow_addr: Option<String>,
 }
 
 #[derive(Debug, Clap)]
@@ -666,9 +673,17 @@ async fn remove_ssh() -> Result<(), CliError> {
 }
 
 async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
-    let info = SharedInfo::new()
-        .await
-        .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?;
+    let info = match (args.ebbflow_addr, args.ebbflow_dns) {
+        (Some(addr), Some(dns)) => {
+            SharedInfo::new_with_ebbflow_overrides(addr.parse().expect("Could not parse the ebbflow addr as ipv4"), dns.to_string(), ROOTS.clone())
+                .await
+                .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?
+        }
+        _ => SharedInfo::new()
+                .await
+                .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
+    };
+
     env_logger::builder()
         .filter_level(args.loglevel.unwrap_or(LevelFilter::Warn))
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
