@@ -4,8 +4,11 @@ extern crate log;
 use clap::{crate_version, Clap};
 use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
 use ebbflow::{
+    certs::ROOTS,
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
-    hostname_or_die, certs::ROOTS,
+    hostname_or_die,
+    messagequeue::MessageQueue,
+    DaemonEndpointStatus, DaemonStatus, DaemonStatusMeta,
 };
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use log::LevelFilter;
@@ -48,6 +51,8 @@ enum SubCommand {
     /// Typically used in container environments.
     /// Use `EBB_KEY` environment variable to pass the key in, or it will fallback to key from init
     RunBlocking(RunBlockingArgs),
+    /// Retrieve the status of the background daemon, helpful in debugging
+    Status,
 }
 
 #[derive(Debug, Clap)]
@@ -100,10 +105,10 @@ struct RunBlockingArgs {
     loglevel: Option<LevelFilter>,
 
     /// This allows you to override the DNS value used to connect to Ebbflow, addr is required as well
-    #[clap(long, hidden=true)]
+    #[clap(long, hidden = true)]
     ebbflow_dns: Option<String>,
     /// This allows you to override the IP address of Ebbflow, dns is required as well
-    #[clap(long, hidden=true)]
+    #[clap(long, hidden = true)]
     ebbflow_addr: Option<String>,
 }
 
@@ -238,6 +243,7 @@ async fn main() {
         },
         SubCommand::Init(args) => init(&addr, args).await,
         SubCommand::RunBlocking(args) => run_blocking(args).await,
+        SubCommand::Status => status().await,
     };
 
     match result {
@@ -671,17 +677,109 @@ async fn remove_ssh() -> Result<(), CliError> {
     existing.save_to_file().await?;
     Ok(())
 }
+async fn status() -> Result<(), CliError> {
+    let addr = ebbflow::config::read_addr().await?;
+
+    let status = match reqwest::get(&format!("http://{}/unstable_status", addr)).await {
+        Ok(r) => match r.json::<ebbflow::DaemonStatus>().await {
+            Ok(s) => s,
+            Err(e) => return Err(CliError::Other(format!("Failure retrieving status from the local daemon! Very unexpected.\nError Message: {:?}", e)))
+        },
+        Err(e) => return Err(CliError::Other(format!("Failure retrieving status from the local daemon, it may not be running..\nError Message: {:?}", e))),
+    };
+
+    print_status(status);
+
+    Ok(())
+}
+
+fn print_status(status: DaemonStatus) {
+    println!(
+        "Overall Health: {}",
+        match status.meta {
+            DaemonStatusMeta::Good => "Good",
+            DaemonStatusMeta::Uninitialized => "Uninitialized",
+        }
+    );
+    println!();
+    println!("Endpoints");
+    println!("----------------------");
+
+    if !status.endpoints.is_empty() {
+        let mut max = 0;
+        for e in status.endpoints.iter() {
+            max = std::cmp::max(max, e.0.len());
+        }
+
+        println!(
+            "{:width$}\tEnabled\tCurrActiveConns\tCurrActiveConns\t",
+            "DNS",
+            width = max
+        );
+        for (e, status) in status.endpoints {
+            print_status_line(&e, status, max);
+        }
+    } else {
+        println!("No endpoints known.");
+    }
+    println!();
+    println!("SSH Proxy");
+    println!("-----------------");
+
+    if let Some((hostname, status)) = status.ssh {
+        let max = hostname.len();
+        println!(
+            "{:width$}\tEnabled\tCurrActiveConns\tCurrIdleConns\t",
+            "Hostname",
+            width = max
+        );
+        print_status_line(&hostname, status, max);
+    } else {
+        println!("SSH not configured");
+    }
+
+    println!();
+    println!("Recent Error Messages");
+    println!("-----------------");
+    if !status.messages.is_empty() {
+        for (timestamp, message) in status.messages {
+            println!("{} - {}", timestamp, message);
+        }
+    } else {
+        println!("No recent error messages.");
+    }
+}
+
+fn print_status_line(endpoint_str: &str, status: DaemonEndpointStatus, max: usize) {
+    let (enableddisabled, active, idle) = match status {
+        DaemonEndpointStatus::Disabled => ("Disabled", "".to_string(), "".to_string()),
+        DaemonEndpointStatus::Enabled { active, idle } => {
+            ("Enabled", active.to_string(), idle.to_string())
+        }
+    };
+    println!(
+        "{:width$}\t{}\t{}\t\t{}",
+        endpoint_str,
+        enableddisabled,
+        active,
+        idle,
+        width = max
+    );
+}
 
 async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
     let info = match (args.ebbflow_addr, args.ebbflow_dns) {
-        (Some(addr), Some(dns)) => {
-            SharedInfo::new_with_ebbflow_overrides(addr.parse().expect("Could not parse the ebbflow addr as ipv4"), dns.to_string(), ROOTS.clone())
-                .await
-                .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?
-        }
+        (Some(addr), Some(dns)) => SharedInfo::new_with_ebbflow_overrides(
+            addr.parse()
+                .expect("Could not parse the ebbflow addr as ipv4"),
+            dns.to_string(),
+            ROOTS.clone(),
+        )
+        .await
+        .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
         _ => SharedInfo::new()
-                .await
-                .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
+            .await
+            .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
     };
 
     env_logger::builder()
@@ -713,6 +811,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
             maxconns: args.maxconns.unwrap_or(5_000) as usize,
             endpoint: args.dns,
             local_addr: addr,
+            message_queue: Arc::new(MessageQueue::new()),
         },
     )
     .await;

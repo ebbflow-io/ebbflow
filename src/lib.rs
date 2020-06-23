@@ -8,6 +8,8 @@ use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
 use futures::future::BoxFuture;
+use messagequeue::MessageQueue;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -23,23 +25,26 @@ pub mod certs;
 pub mod config;
 pub mod daemon;
 pub mod dns;
+pub mod infoserver;
+pub mod messagequeue;
 pub mod messaging;
 pub mod signal;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DaemonStatusMeta {
     Uninitialized,
     Good,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DaemonStatus {
     pub meta: DaemonStatusMeta,
     pub endpoints: Vec<(String, DaemonEndpointStatus)>,
-    pub ssh: Option<DaemonEndpointStatus>,
+    pub ssh: Option<(String, DaemonEndpointStatus)>,
+    pub messages: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DaemonEndpointStatus {
     Disabled,
     Enabled { active: usize, idle: usize },
@@ -118,6 +123,10 @@ impl DaemonRunner {
         let inner = self.inner.lock().await;
         inner.status()
     }
+
+    pub async fn submit_error_message(&self, message: String) {
+        self.inner.lock().await.submit_error_message(message);
+    }
 }
 
 struct InnerDaemonRunner {
@@ -125,6 +134,7 @@ struct InnerDaemonRunner {
     statusmeta: DaemonStatusMeta,
     ssh: Option<SshInstance>,
     info: Arc<SharedInfo>,
+    message_queue: Arc<MessageQueue>,
 }
 
 impl InnerDaemonRunner {
@@ -134,7 +144,12 @@ impl InnerDaemonRunner {
             ssh: None,
             statusmeta: DaemonStatusMeta::Uninitialized,
             info,
+            message_queue: Arc::new(MessageQueue::new()),
         }
+    }
+
+    pub fn submit_error_message(&self, message: String) {
+        self.message_queue.add_message(message);
     }
 
     pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig, key: Option<String>) {
@@ -145,7 +160,9 @@ impl InnerDaemonRunner {
 
         // We do this so we can later info.key().unwrap(). (defense in depth)
         if self.info.key().is_none() {
-            error!("ERROR: Valid configuration found, but key not set, doing nothing");
+            let e = "ERROR: Valid configuration found, but key not set, doing nothing";
+            self.submit_error_message(e.to_string());
+            error!("{}", e);
             return;
         }
         self.statusmeta = DaemonStatusMeta::Good;
@@ -190,8 +207,12 @@ impl InnerDaemonRunner {
                             // Stop the existing one (may not be running anways)
                             current_instance.enabledisable.stop();
                             // Create a new one
-                            let meta =
-                                spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await;
+                            let meta = spawn_endpointasdfsfa(
+                                endpoint.clone(),
+                                self.info.clone(),
+                                self.message_queue.clone(),
+                            )
+                            .await;
                             EnabledDisabled::Enabled(meta)
                         } else {
                             debug!("New configuration is DISABLED, stopping existing one and setting new one to enabled");
@@ -212,7 +233,12 @@ impl InnerDaemonRunner {
                     debug!("Configuration for an endpoint that did NOT previously exist found, will create it {}", endpoint.dns);
                     let enabledisable = if endpoint.enabled {
                         EnabledDisabled::Enabled(
-                            spawn_endpointasdfsfa(endpoint.clone(), self.info.clone()).await,
+                            spawn_endpointasdfsfa(
+                                endpoint.clone(),
+                                self.info.clone(),
+                                self.message_queue.clone(),
+                            )
+                            .await,
                         )
                     } else {
                         EnabledDisabled::Disabled
@@ -252,6 +278,7 @@ impl InnerDaemonRunner {
                                 Ipv4Addr::new(127, 0, 0, 1),
                                 newconfig.port,
                             ),
+                            message_queue: self.message_queue.clone(),
                         };
 
                         let meta = spawn_endpoint(self.info.clone(), args).await;
@@ -277,7 +304,10 @@ impl InnerDaemonRunner {
 
     pub fn status(&self) -> DaemonStatus {
         let ssh = match &self.ssh {
-            Some(sshinstance) => Some(DaemonEndpointStatus::from_ref(&sshinstance.enabledisable)),
+            Some(sshinstance) => Some((
+                sshinstance.existing_config.hostname.clone(),
+                DaemonEndpointStatus::from_ref(&sshinstance.enabledisable),
+            )),
             None => None,
         };
         let e = self
@@ -290,6 +320,7 @@ impl InnerDaemonRunner {
             meta: self.statusmeta,
             endpoints: e,
             ssh,
+            messages: self.message_queue.get_messages(),
         }
     }
 }
@@ -297,6 +328,7 @@ impl InnerDaemonRunner {
 pub async fn spawn_endpointasdfsfa(
     e: crate::config::Endpoint,
     info: Arc<SharedInfo>,
+    message_queue: Arc<MessageQueue>,
 ) -> Arc<EndpointMeta> {
     let address = "127.0.0.1";
     let ip = address.parse().unwrap();
@@ -312,6 +344,7 @@ pub async fn spawn_endpointasdfsfa(
         maxconns: e.maxconns as usize,
         endpoint: e.dns,
         local_addr: SocketAddrV4::new(ip, port),
+        message_queue,
     };
 
     spawn_endpoint(info, args).await
@@ -345,7 +378,9 @@ pub async fn run_daemon(
                     debug!("New config applied");
                 }
                 Err(e) => {
-                    warn!("Error reading new configuration {:?}", e);
+                    let e = format!("Error reading new configuration {:?}", e);
+                    warn!("{}", e);
+                    runnerc.submit_error_message(e).await;
                 }
             }
             trace!("Now waiting for notification");

@@ -570,7 +570,7 @@ mod basic_tests_v0 {
                 port: sshp,
                 enabled: true,
                 maxidle: 1,
-                hostname_override: Some(hn),
+                hostname_override: Some(hn.clone()),
             }),
         };
 
@@ -586,7 +586,7 @@ mod basic_tests_v0 {
 
         assert_eq!(DaemonStatusMeta::Good, status.meta);
         assert_eq!(
-            Some(DaemonEndpointStatus::Enabled { active: 0, idle: 1 }),
+            Some((hn, DaemonEndpointStatus::Enabled { active: 0, idle: 1 })),
             status.ssh
         );
 

@@ -4,6 +4,7 @@ use crate::daemon::connection::{run_connection, EndpointConnectionArgs, Endpoint
 use crate::dns::DnsResolver;
 use crate::{
     certs::ROOTS,
+    messagequeue::MessageQueue,
     signal::{SignalReceiver, SignalSender},
 };
 use futures::future::select;
@@ -106,13 +107,14 @@ impl SharedInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct EndpointArgs {
     pub ctype: EndpointConnectionType,
     pub idleconns: usize,
     pub maxconns: usize,
     pub endpoint: String,
     pub local_addr: SocketAddrV4,
+    pub message_queue: Arc<MessageQueue>,
 }
 
 pub struct EndpointMeta {
@@ -225,6 +227,7 @@ async fn inner_run_endpoint(
 
         // We have a permit, start a connection
         let receiverc = receiver.clone();
+        let messageq = args.message_queue.clone();
         let args = create_args(&info, &args, ccfg.clone()).await;
         debug!(
             "Creating new connection for {} (localaddr: {:?})",
@@ -237,7 +240,7 @@ async fn inner_run_endpoint(
             args.ebbflow_dns
         );
         tokio::spawn(async move {
-            run_connection(receiverc, args, idlepermit, m.clone()).await;
+            run_connection(receiverc, args, idlepermit, m.clone(), messageq).await;
             debug!("Connection ended i{} a{}", m.num_idle(), m.num_active());
             drop(maxpermit);
         });

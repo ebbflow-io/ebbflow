@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
+use std::{fs::OpenOptions, net::SocketAddrV4};
 use tokio::fs;
 use tokio::fs::OpenOptions as TokioOpenOptions;
 use tokio::io::Error as IoError;
@@ -41,8 +41,35 @@ pub fn key_file_full() -> String {
     format!("{}/{}", config_path_root(), KEY_FILE)
 }
 
+#[cfg(windows)]
+pub fn addr_file_full() -> String {
+    format!("{}\\{}", config_path_root(), ADDR_FILE)
+}
+
+#[cfg(not(windows))]
+pub fn addr_file_full() -> String {
+    format!("{}/{}", config_path_root(), ADDR_FILE)
+}
+
+pub async fn write_addr(addr: &str) -> Result<(), ConfigError> {
+    Ok(fs::write(addr_file_full(), addr.trim()).await?)
+}
+
+pub async fn read_addr() -> Result<SocketAddrV4, ConfigError> {
+    let s = fs::read_to_string(addr_file_full()).await?;
+    if s.is_empty() {
+        return Err(ConfigError::Empty);
+    }
+
+    Ok(s.trim()
+        .to_string()
+        .parse()
+        .map_err(|_| ConfigError::Parsing)?)
+}
+
 pub const CONFIG_FILE: &str = "config.yaml";
 pub const KEY_FILE: &str = "host.key";
+pub const ADDR_FILE: &str = ".daemonaddr";
 
 #[derive(Debug)]
 pub enum ConfigError {

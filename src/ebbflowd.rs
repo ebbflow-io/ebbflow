@@ -7,7 +7,7 @@ use ebbflow::config::{
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
-use ebbflow::{certs::ROOTS, signal::SignalSender};
+use ebbflow::{certs::ROOTS, infoserver::run_info_server, signal::SignalSender};
 use futures::future::BoxFuture;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Arc;
@@ -203,19 +203,30 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
             e
         ));
     }
-    
 
-    let sharedinfo = match (std::env::var("UNSTABLE_EBB_ADDR").ok(), std::env::var("UNSTABLE_EBB_DNS").ok()) {
+    let sharedinfo = match (
+        std::env::var("UNSTABLE_EBB_ADDR").ok(),
+        std::env::var("UNSTABLE_EBB_DNS").ok(),
+    ) {
         (Some(addr), Some(dns)) => {
             let addr = match addr.parse() {
                 Ok(x) => x,
-                Err(e) => return Err(format!("Error creating ipv4 addr from overriden value {} {:?}", addr, e)),
+                Err(e) => {
+                    return Err(format!(
+                        "Error creating ipv4 addr from overriden value {} {:?}",
+                        addr, e
+                    ))
+                }
             };
-            Arc::new(match SharedInfo::new_with_ebbflow_overrides(addr, dns.to_string(), ROOTS.clone()).await {
-                Ok(x) => x,
-                Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
-            })
-        } 
+            Arc::new(
+                match SharedInfo::new_with_ebbflow_overrides(addr, dns.to_string(), ROOTS.clone())
+                    .await
+                {
+                    Ok(x) => x,
+                    Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
+                },
+            )
+        }
         _ => Arc::new(match SharedInfo::new().await {
             Ok(x) => x,
             Err(e) => return Err(format!("Error creating daemon settings {:?}", e)),
@@ -223,6 +234,7 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
     };
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), notify).await;
+    let runnerc = runner.clone();
 
     tokio::spawn(async move {
         loop {
@@ -230,6 +242,9 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
             info!("Status\n{:#?}", runner.status().await);
         }
     });
+
+    // Spawn the server that produces info about the daemon
+    tokio::spawn(run_info_server(runnerc));
 
     wait.wait().await;
     Ok(())

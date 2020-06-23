@@ -1,7 +1,7 @@
 use crate::messaging::{
     HelloResponseIssue, HelloV0, Message, MessageError, StartTrafficResponseV0,
 };
-use crate::signal::SignalReceiver;
+use crate::{messagequeue::MessageQueue, signal::SignalReceiver};
 use futures::future::{Either, Future};
 use rand::rngs::SmallRng;
 use rand::Rng;
@@ -72,6 +72,7 @@ pub async fn run_connection(
     args: EndpointConnectionArgs,
     idle_permit: tokio::sync::OwnedSemaphorePermit,
     meta: Arc<super::EndpointMeta>,
+    message: Arc<MessageQueue>,
 ) {
     meta.add_idle();
     let getstreamresult = timeout(
@@ -88,29 +89,34 @@ pub async fn run_connection(
                 ConnectionError::Forbidden
                 | ConnectionError::NotFound
                 | ConnectionError::BadRequest => {
-                    warn!(
+                    let s = format!(
                         "A connection for endpoint {} failed due to {:?}",
                         args.endpoint, e
                     );
+                    warn!("{}", s);
+                    message.add_message(s);
                     trace!("Bad error delay");
                     jittersleep1p5(BAD_ERROR_DELAY).await;
                     // We should sleep to avoid spamming, as NotFound and Forbidden errors
                     // are unlikely to be resolved anytime soon.
-                    }
-                    _ => {
-                        debug!(
-                            "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
-                            args.endpoint, e
-                        );
-                    }
+                }
+                _ => {
+                    debug!(
+                        "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
+                        args.endpoint, e
+                    );
+                }
             }
             trace!("Minimum Delay");
             jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
 
             return;
-        },
+        }
         Err(_e) => {
-            debug!("Timed out connecting to Ebbflow {:?}", MAX_IDLE_CONNETION_TIME);
+            debug!(
+                "Timed out connecting to Ebbflow {:?}",
+                MAX_IDLE_CONNETION_TIME
+            );
             return;
         }
     };
@@ -118,14 +124,15 @@ pub async fn run_connection(
     meta.remove_idle();
     drop(idle_permit);
 
-    let (ebbstream, localtcp, now) = match connect_local_with_ebbflow_communication(stream, &args).await {
-        Ok(triple) => triple,
-        Err(_e) => {
-            trace!("Minimum Delay");
-            jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
-            return;
-        }
-    };
+    let (ebbstream, localtcp, now) =
+        match connect_local_with_ebbflow_communication(stream, &args).await {
+            Ok(triple) => triple,
+            Err(_e) => {
+                trace!("Minimum Delay");
+                jittersleep1p5(MIN_EBBFLOW_ERROR_DELAY).await;
+                return;
+            }
+        };
     trace!(
         "Connection handshake complete and a local connection has been established, proxying data"
     );
