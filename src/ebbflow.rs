@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
 };
 
-const DEFAULT_SSH_CONNS: u16 = 10;
+const DEFAULT_SSH_CONNS: u16 = 20;
 const DEFAULT_SSH_IDLE: u16 = 3;
 const DEFAULT_EBBFLOW_API_ADDR: &str = "https://api.ebbflow.io/v1";
 const DEFAULT_EBBFLOW_SITE_ADDR: &str = "https://ebbflow.io/init";
@@ -131,6 +131,9 @@ struct SetupSshArgs {
     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
     #[clap(long)]
     maxidle: Option<u16>,
+    /// provide this if you'd like to initially have the SSH proxy disabled
+    #[clap(short, long)]
+    disabled: bool,
 }
 
 #[derive(Debug, Clap)]
@@ -139,14 +142,15 @@ struct AddEndpointArgs {
     dns: String,
     /// The port the local service runs on (NUM)
     local_port: u16,
-    /// the maximum amount of open connections, defaults to 200 (NUM)\
+    /// the maximum amount of open connections, defaults to 5000 (NUM)
     #[clap(long)]
     maxconns: Option<u16>,
     /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
     #[clap(long)]
     maxidle: Option<usize>,
-    // The address the application runs on locally, defaults to 127.0.0.1
-    // address_override: Option<String>,
+    /// provide this if you'd like to initially have this endpoint be disabled
+    #[clap(short, long)]
+    disabled: bool,
 }
 
 #[derive(Debug, Clap)]
@@ -538,10 +542,10 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
     let newendpoint = Endpoint {
         port: args.local_port,
         dns: args.dns,
-        maxconns: args.maxconns.unwrap_or(500),
-        maxidle: args.maxidle.unwrap_or(20) as u16,
+        maxconns: args.maxconns.unwrap_or(5000),
+        maxidle: args.maxidle.unwrap_or(40) as u16,
         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
-        enabled: true,
+        enabled: !args.disabled,
     };
 
     let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
@@ -662,7 +666,7 @@ async fn setup_ssh(args: SetupSshArgs) -> Result<(), CliError> {
     existing.ssh = Some(Ssh {
         maxconns: args.maxconns.unwrap_or(DEFAULT_SSH_CONNS),
         port: args.port.unwrap_or(22),
-        enabled: true,
+        enabled: !args.disabled,
         hostname_override: args.hostname,
         maxidle: idle,
     });
