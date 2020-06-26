@@ -739,18 +739,18 @@ fn print_status(status: DaemonStatus) {
         );
         print_status_line(&hostname, status, max);
     } else {
-        println!("SSH not configured");
+        println!("SSH configuration not known.");
     }
 
     println!();
-    println!("Recent Error Messages");
+    println!("Daemon Messages");
     println!("-----------------");
     if !status.messages.is_empty() {
         for (timestamp, message) in status.messages {
             println!("{} - {}", timestamp, message);
         }
     } else {
-        println!("No recent error messages.");
+        println!("No daemon messages.");
     }
 }
 

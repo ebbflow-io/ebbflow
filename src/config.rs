@@ -71,7 +71,7 @@ pub const CONFIG_FILE: &str = "config.yaml";
 pub const KEY_FILE: &str = "host.key";
 pub const ADDR_FILE: &str = ".daemonaddr";
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub enum ConfigError {
     Parsing,
     FileNotFound,

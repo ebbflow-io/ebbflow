@@ -667,7 +667,7 @@ mod basic_tests_v0 {
             Box<
                 dyn Fn() -> BoxFuture<
                         'static,
-                        Result<(EbbflowDaemonConfig, Option<String>), ConfigError>,
+                        Result<(Option<EbbflowDaemonConfig>, Option<String>), ConfigError>,
                     > + Send
                     + Sync
                     + 'static,
@@ -681,7 +681,9 @@ mod basic_tests_v0 {
             cfg,
             Box::pin(move || {
                 let cc = c.clone();
-                Box::pin(async move { Ok((cc.lock().await.clone(), Some("asdf".to_string()))) })
+                Box::pin(
+                    async move { Ok((Some(cc.lock().await.clone()), Some("asdf".to_string()))) },
+                )
             }),
         )
     }

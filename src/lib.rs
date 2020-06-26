@@ -114,7 +114,7 @@ impl DaemonRunner {
         }
     }
 
-    pub async fn update_config(&self, config: EbbflowDaemonConfig, key: Option<String>) {
+    pub async fn update_config(&self, config: Option<EbbflowDaemonConfig>, key: Option<String>) {
         let mut inner = self.inner.lock().await;
         inner.update_config(config, key).await;
     }
@@ -152,7 +152,11 @@ impl InnerDaemonRunner {
         self.message_queue.add_message(message);
     }
 
-    pub async fn update_config(&mut self, mut config: EbbflowDaemonConfig, key: Option<String>) {
+    pub async fn update_config(
+        &mut self,
+        config: Option<EbbflowDaemonConfig>,
+        key: Option<String>,
+    ) {
         // Update the key
         if let Some(k) = key {
             self.info.update_key(k);
@@ -161,12 +165,20 @@ impl InnerDaemonRunner {
         // We do this so we can later info.key().unwrap(). (defense in depth)
         if self.info.key().is_none() {
             self.statusmeta = DaemonStatusMeta::Uninitialized;
-            let e = "ERROR: Valid configuration found, but key not set, doing nothing";
+            let e = format!(
+                "INFO: Key not set, doing nothing (cfg present {})",
+                config.is_some()
+            );
             self.submit_error_message(e.to_string());
             error!("{}", e);
             return;
         }
         self.statusmeta = DaemonStatusMeta::Good;
+
+        let mut config = match config {
+            Some(c) => c,
+            None => return,
+        };
 
         let mut set = HashSet::with_capacity(config.endpoints.len());
         trace!("Config updating, {} endpoints", config.endpoints.len());
@@ -356,9 +368,10 @@ pub async fn run_daemon(
     info: Arc<SharedInfo>,
     cfg_reload: Pin<
         Box<
-            dyn Fn()
-                    -> BoxFuture<'static, Result<(EbbflowDaemonConfig, Option<String>), ConfigError>>
-                + Send
+            dyn Fn() -> BoxFuture<
+                    'static,
+                    Result<(Option<EbbflowDaemonConfig>, Option<String>), ConfigError>,
+                > + Send
                 + Sync
                 + 'static,
         >,

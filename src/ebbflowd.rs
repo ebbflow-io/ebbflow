@@ -251,10 +251,14 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 }
 
 pub fn config_reload(
-) -> BoxFuture<'static, Result<(EbbflowDaemonConfig, Option<String>), ConfigError>> {
+) -> BoxFuture<'static, Result<(Option<EbbflowDaemonConfig>, Option<String>), ConfigError>> {
     Box::pin(async {
         debug!("Will read config file, {}", config_file_full());
-        let cfg = EbbflowDaemonConfig::load_from_file().await?;
+        let cfg = match EbbflowDaemonConfig::load_from_file().await {
+            Ok(c) => Some(c),
+            Err(ref e) if &ConfigError::Empty == e => None,
+            Err(e) => return Err(e),
+        };
         debug!(
             "Config file parsed successfully, now trying key file {}",
             key_file_full()
