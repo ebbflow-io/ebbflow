@@ -83,6 +83,16 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                             Source='LICENSE'
                             KeyPath='yes'/>
                     </Component>
+                    <!-- <Component Id="DaemonAddrFile" Guid='*' Win64='$(var.Win64)' NeverOverwrite='yes'>
+                      <File Id="DaemonAddrFile"
+                        Name=".daemonaddr"
+                        Source='assets\empty.key'
+                        KeyPath='yes'
+                        DiskId='1'>
+                        <Permission User="Everyone" GenericAll="no" />
+                        <Permission User="Administrators" GenericAll="yes" />
+                      </File>
+                    </Component>
                     <Component Id="conf.yaml" Guid="cc509cb7-c1a1-46cf-8c62-7cbb0017783c" Win64='$(var.Win64)' NeverOverwrite='yes'>
                       <File Id="ConfigFile"
                         Name="config.yaml"
@@ -102,7 +112,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                         <Permission User="Everyone" GenericAll="no" />
                         <Permission User="Administrators" GenericAll="yes" />
                       </File>
-                    </Component>
+                    </Component> -->
                     <Component Id='EbbflowClientService' Guid='*' Win64='$(var.Win64)'>
                       <File
                           Id='exe1'
@@ -185,8 +195,9 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
             -->
             <ComponentRef Id='License'/>
             <ComponentRef Id='binary0'/>
-            <ComponentRef Id='conf.yaml'/>
+            <!-- <ComponentRef Id='conf.yaml'/>
             <ComponentRef Id='host.key'/>
+            <ComponentRef Id='DaemonAddrFile'/> -->
             <ComponentRef Id='EbbflowClientService'/>
 
             <Feature
@@ -207,8 +218,8 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
-        <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
+        <Icon Id='ProductICO' SourceFile='assets\e.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO' />
 
         <Property Id='ARPHELPLINK' Value='https://ebbflow.io'/>
         
@@ -237,7 +248,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
           the following `WixUILicenseRTF` tag and changing the `Value`
           attribute.
         -->
-        <!-- <WixVariable Id='WixUILicenseRtf' Value='Relative\Path\to\Eula.rtf'/> -->
+        <WixVariable Id='WixUILicenseRtf' Value='assets\windowswelcome.rtf'/>
 
         
         <!--
@@ -248,7 +259,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
           The banner BMP dimensions are 493 x 58 pixels.
         -->
-        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
+        <WixVariable Id='WixUIBannerBmp' Value='assets\ebbbn.bmp'/>
 
         
         <!--
@@ -259,7 +270,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
           The dialog BMP dimensions are 493 x 312 pixels.
         -->
-        <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
+        <WixVariable Id='WixUIDialogBmp' Value='assets\ebbbg.bmp'/>
 
     </Product>
 </Wix>

@@ -13,6 +13,9 @@ use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, Recursi
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
+use log::LevelFilter;
+
+const DEFAULT_LEVEL: LevelFilter = LevelFilter::Warn;
 
 #[cfg(windows)]
 fn main() {
@@ -57,8 +60,6 @@ mod windows {
     }
 
     pub fn run_service() -> Result<()> {
-        std::env::set_var("RUST_LOG", "DEBUG");
-        winlog::init("Ebbflow Service Log").unwrap();
         // Create a channel to be able to poll a stop event from the service worker loop.
         let sender = SignalSender::new();
         let r = sender.new_receiver();
@@ -96,6 +97,11 @@ mod windows {
         })?;
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
+
+        let loglevel = rt.block_on(crate::determine_log_level());
+        std::env::set_var("RUST_LOG", &loglevel.to_string());
+        winlog::init("Ebbflow Service Log").unwrap();
+
         let existcode = rt.block_on(async move {
             match super::realmain(r).await {
                 Ok(()) => {
@@ -138,8 +144,10 @@ mod windows {
 #[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> Result<(), ()> {
+    let loglevel = crate::determine_log_level().await;
+
     env_logger::builder()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(loglevel)
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
 
@@ -156,6 +164,22 @@ async fn main() -> Result<(), ()> {
             eprintln!("Daemon exited with error: {:?}", e);
             Err(())
         }
+    }
+}
+
+async fn determine_log_level() -> LevelFilter {
+    let leveloption: Option<String> = match config_reload().await {
+        Ok((Some(cfg), _)) => cfg.loglevel,
+        _ => None
+    };
+    use std::str::FromStr;
+
+    match leveloption {
+        Some(s) => match LevelFilter::from_str(&s) {
+            Ok(lf) => lf,
+            Err(_) => crate::DEFAULT_LEVEL,
+        }
+        None => crate::DEFAULT_LEVEL,
     }
 }
 

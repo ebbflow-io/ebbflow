@@ -119,6 +119,8 @@ pub struct EbbflowDaemonConfig {
     pub endpoints: Vec<Endpoint>,
     /// SSH Config overrides, not needed
     pub ssh: Option<Ssh>,
+    /// The level to log the daemon with
+    pub loglevel: Option<String>,
 }
 
 impl EbbflowDaemonConfig {
@@ -139,6 +141,7 @@ impl EbbflowDaemonConfig {
                 ConfigError::Empty | ConfigError::FileNotFound => EbbflowDaemonConfig {
                     endpoints: vec![],
                     ssh: None,
+                    loglevel: None,
                 },
                 _ => return Err(e),
             },

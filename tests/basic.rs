@@ -156,6 +156,7 @@ mod basic_tests_v0 {
                 maxconns: 100,
                 maxidle: 2,
             }),
+            loglevel: None,
         };
 
         let (_notify, _arcmutex, _) = start_basic_daemon(testclientport, cfg).await;
@@ -373,6 +374,7 @@ mod basic_tests_v0 {
                 maxconns: 100,
                 maxidle: 2,
             }),
+            loglevel: None,
         };
 
         let (notify, arcmutex, _) = start_basic_daemon(testclientport, cfg.clone()).await;
@@ -479,6 +481,7 @@ mod basic_tests_v0 {
                 maxconns: 100,
                 maxidle: 2,
             }),
+            loglevel: None,
         };
 
         let (notify, arcmutex, _) = start_basic_daemon(testclientport, cfg.clone()).await;
@@ -572,6 +575,7 @@ mod basic_tests_v0 {
                 maxidle: 1,
                 hostname_override: Some(hn.clone()),
             }),
+            loglevel: None,
         };
 
         tokio::spawn(listen_and_process(customerport, testclientport));
@@ -656,6 +660,7 @@ mod basic_tests_v0 {
                 enabled: true,
             }],
             ssh: None,
+            loglevel: None,
         }
     }
 

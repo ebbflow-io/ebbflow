@@ -77,6 +77,29 @@ enum Config {
     RemoveSshConfiguration,
     /// Prints the current configuration (NOTE: Output subject to change)
     Print,
+    /// Modify the log level of the daemon
+    LogLevel(LogLevelSubCommand),
+}
+
+#[derive(Debug, Clap)]
+struct LogLevelSubCommand {
+    #[clap(subcommand)]
+    subcommand: LogLevelSubCommands,
+}
+
+#[derive(Debug, Clap)]
+enum LogLevelSubCommands {
+    /// Resets the log level to the default
+    Reset,
+    /// Sets the log level (restart needed)
+    Set(LogLevelArgs),
+}
+
+#[derive(Debug, Clap)]
+struct LogLevelArgs {
+    /// Specify the level, e.g. Error, Warn, Info, Debug, Trace
+    #[clap(short, long)]
+    level: LevelFilter,
 }
 
 #[derive(Debug, Clap)]
@@ -103,7 +126,6 @@ struct RunBlockingArgs {
     /// Log level. Debug, Info, Warn (Default), NOTE: Output is subject to change!!
     #[clap(long)]
     loglevel: Option<LevelFilter>,
-
     /// This allows you to override the DNS value used to connect to Ebbflow, addr is required as well
     #[clap(long, hidden = true)]
     ebbflow_dns: Option<String>,
@@ -244,6 +266,7 @@ async fn main() {
             Config::Print => printconfignokey().await,
             Config::SetupSsh(args) => setup_ssh(args).await,
             Config::RemoveSshConfiguration => remove_ssh().await,
+            Config::LogLevel(levelargs) => setloglevel(levelargs).await,
         },
         SubCommand::Init(args) => init(&addr, args).await,
         SubCommand::RunBlocking(args) => run_blocking(args).await,
@@ -396,6 +419,7 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     let cfg = EbbflowDaemonConfig {
         ssh: sshcfg,
         endpoints: vec![],
+        loglevel: None,
     };
 
     cfg.save_to_file().await?;
@@ -520,6 +544,17 @@ async fn set_endpoint_enabled(enabled: bool, dns: Option<&str>) -> Result<(bool,
     existing.save_to_file().await?;
 
     Ok((targeted_found, mutated))
+}
+
+async fn setloglevel(levelargs: LogLevelSubCommand) -> Result<(), CliError> {
+    let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
+    existing.loglevel = match levelargs.subcommand {
+        LogLevelSubCommands::Reset => None,
+        LogLevelSubCommands::Set(l) => Some(l.level.to_string()),
+    };
+    existing.save_to_file().await?;
+    println!("Log level set, now restart the daemon for this to take effect.");
+    Ok(())
 }
 
 async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
