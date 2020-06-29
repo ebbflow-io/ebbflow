@@ -90,3 +90,4 @@ ebbflowd = { path = "/usr/sbin/ebbflowd" }
 "ebbflowd.service" = { path = "/usr/lib/systemd/system/ebbflowd.service", mode = "644" }
 "empty.config.yaml" = { path = "/etc/ebbflow/config.yaml", mode = "644" }
 "empty.key" = { path = "/etc/ebbflow/host.key", mode = "600" }
+".emptydaemonaddr" = { path = "/etc/ebbflow/.daemonaddr", mode = "644" }
