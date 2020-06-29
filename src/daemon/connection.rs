@@ -81,6 +81,7 @@ pub async fn run_connection(
     )
     .await;
     // Important: Release any idle connections ASAP so we can start another connection
+    meta.remove_idle();
 
     let stream = match getstreamresult {
         Ok(Ok(stream)) => stream,
@@ -121,7 +122,6 @@ pub async fn run_connection(
         }
     };
     debug!("Dropping idle permit {:#?}", Instant::now());
-    meta.remove_idle();
     drop(idle_permit);
 
     let (ebbstream, localtcp, now) =

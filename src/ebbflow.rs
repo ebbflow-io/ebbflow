@@ -716,7 +716,7 @@ fn print_status(status: DaemonStatus) {
         }
 
         println!(
-            "{:width$}\tEnabled\tCurrActiveConns\tCurrActiveConns\t",
+            "{:width$}\tEnabled\tCurrActiveConns\tCurrIdleConns\t",
             "DNS",
             width = max
         );
