@@ -168,9 +168,12 @@ async fn main() -> Result<(), ()> {
 }
 
 async fn determine_log_level() -> LevelFilter {
-    let leveloption: Option<String> = match config_reload().await {
-        Ok((Some(cfg), _)) => cfg.loglevel,
-        _ => None
+    let leveloption = match std::env::var("EBB_LOG_LEVEL").ok() {
+        Some(l) => Some(l),
+        None => match config_reload().await {
+            Ok((Some(cfg), _)) => cfg.loglevel,
+            _ => None
+        },
     };
     use std::str::FromStr;
 
@@ -184,6 +187,8 @@ async fn determine_log_level() -> LevelFilter {
 }
 
 async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
+    info!("Config file dir {}", config_path_root());
+
     let notify = Arc::new(Notify::new());
     let notifyc = notify.clone();
     let mut watcher: RecommendedWatcher =

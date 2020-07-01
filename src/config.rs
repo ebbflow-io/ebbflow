@@ -8,7 +8,12 @@ use tokio::io::ErrorKind;
 // Path to the Config file, see EbbflowDaemonConfig in the config module.
 #[cfg(target_os = "linux")]
 lazy_static! {
-    pub static ref CONFIG_PATH: String = "/etc/ebbflow".to_string();
+    pub static ref CONFIG_PATH: String = {
+        match std::env::var("EBB_CFG_DIR").ok() {
+            Some(p) => p,
+            None => CONFIG_PATH.to_string().trim_end_matches("/").to_string(),
+        }
+    };
 }
 #[cfg(target_os = "macos")]
 pub const CONFIG_PATH: &str = "/usr/local/etc/ebbflow";
