@@ -13,3 +13,5 @@ if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
 		deb-systemd-helper unmask ebbflowd.service >/dev/null
 	fi
 fi
+
+rm -f /etc/ebbflow/.daemonaddr
