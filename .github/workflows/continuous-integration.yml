@@ -1,6 +1,6 @@
 on: [push]
 
-name: ghactions branch testing
+name: Continuous Integration
 
 jobs:
   quickcheck:
