@@ -7,13 +7,14 @@ use ebbflow::config::{
 use ebbflow::daemon::SharedInfo;
 use ebbflow::run_daemon;
 use ebbflow::signal::SignalReceiver;
+#[allow(unused)]
 use ebbflow::{certs::ROOTS, infoserver::run_info_server, signal::SignalSender};
 use futures::future::BoxFuture;
+use log::LevelFilter;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
-use log::LevelFilter;
 
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::Warn;
 
@@ -172,7 +173,7 @@ async fn determine_log_level() -> LevelFilter {
         Some(l) => Some(l),
         None => match config_reload().await {
             Ok((Some(cfg), _)) => cfg.loglevel,
-            _ => None
+            _ => None,
         },
     };
     use std::str::FromStr;
@@ -181,7 +182,7 @@ async fn determine_log_level() -> LevelFilter {
         Some(s) => match LevelFilter::from_str(&s) {
             Ok(lf) => lf,
             Err(_) => crate::DEFAULT_LEVEL,
-        }
+        },
         None => crate::DEFAULT_LEVEL,
     }
 }

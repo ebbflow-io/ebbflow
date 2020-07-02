@@ -355,48 +355,27 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     EbbflowDaemonConfig::check_permissions().await?;
     let defaulthostname = hostname_or_die();
 
-    println!(
-        "Would you like to have the SSH proxy enabled for this host? Please type yes, y, no, or n"
-    );
-    let enablessh = loop {
-        let mut yn = String::new();
-        io::stdin().read_line(&mut yn)?;
-        if let Some(enabled) = extract_yn(&yn) {
-            break enabled;
-        }
-        println!(
-            "Could not parse {} into yes or no (or y or n), please retry",
-            yn.trim()
-        );
-    };
+    println!("Would you like to have the SSH proxy enabled for this host? (y/yes n/no)");
+    let enablessh = get_yn()?;
 
     let mut hostname: Option<String> = None;
 
     let sshcfg = if enablessh {
-        println!("The hostname {} will be used to identify this host in the ebbflow proxy\ne.g. Clients will execute `ssh -J ebbflow.io {}`, is that ok?", defaulthostname, defaulthostname);
-        if !loop {
-            let mut yn = String::new();
-            io::stdin().read_line(&mut yn)?;
-            if let Some(yn) = extract_yn(&yn) {
-                break yn;
-            }
-            println!(
-                "Could not parse {} into yes or no (or y or n), please retry",
-                yn.trim()
-            );
-        } {
-            println!("What would you like the host to be identified as for SSH proxy?");
+        println!("The hostname {} will be used as the hostname target for the SSH proxy, is that ok? (y/yes n/no)", defaulthostname);
+        if !get_yn()? {
             let r = Regex::new(r"^[-\.[:alnum:]]{1,220}$").unwrap();
             loop {
-                let mut newhn = String::new();
-                io::stdin().read_line(&mut newhn)?;
-                let newhn = newhn.trim();
-                if !r.is_match(&newhn) {
+                println!("Enter the hostname to be used as the target hostname for the SSH proxy");
+                let newhn = get_string()?;
+                if !r.is_match(newhn.as_str()) {
                     println!("The provided name does not appear to be a valid hostname. Must be alphanumeric and only have periods or dashes (-).");
                 } else {
-                    println!("The name {} will be used.", newhn);
-                    hostname = Some(newhn.to_owned());
-                    break;
+                    println!("The name {} will be used. Is that ok? (y/yes n/no)", newhn);
+
+                    if get_yn()? {
+                        hostname = Some(newhn.to_owned());
+                        break;
+                    }
                 }
             }
         }
@@ -411,10 +390,8 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     print_url_instructions(url);
 
     let key = poll_key_creation(finalizeme, addr).await?;
-
-    println!("Great! The key has been provisioned.");
-
     setkey(&key).await?;
+    println!("Great! The key has been provisioned.");
 
     let cfg = EbbflowDaemonConfig {
         ssh: sshcfg,
@@ -423,8 +400,28 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     };
 
     cfg.save_to_file().await?;
+    println!("Initialization complete. To set up and endpoint, use `ebbflow config add-endpoint`.");
 
     Ok(())
+}
+
+fn get_string() -> Result<String, CliError> {
+    let mut yn = String::new();
+    io::stdin().read_line(&mut yn)?;
+    Ok(yn.trim().to_string())
+}
+
+fn get_yn() -> Result<bool, CliError> {
+    Ok(loop {
+        let yn = get_string()?;
+        if let Some(enabled) = extract_yn(&yn) {
+            break enabled;
+        }
+        println!(
+            "Could not parse {} into (y/yes n/no), please retry",
+            yn.trim()
+        );
+    })
 }
 
 fn extract_yn(yn: &str) -> Option<bool> {
@@ -440,7 +437,9 @@ async fn poll_key_creation(
     finalizeme: HostKeyInitFinalizationContext,
     addr: &str,
 ) -> Result<String, CliError> {
-    print!("Waiting for key creation to be completed");
+    use std::io::Write;
+    print!("Waiting for key creation to be completed..");
+    let _ = std::io::stdout().flush();
     let client = reqwest::Client::new();
     loop {
         tokio::time::delay_for(Duration::from_secs(5)).await;
@@ -452,14 +451,12 @@ async fn poll_key_creation(
         {
             Ok(response) => match response.status() {
                 StatusCode::OK => {
-                    use std::io::Write;
                     println!();
                     let _ = std::io::stdout().flush();
                     let keydata: KeyData = response.json().await?;
                     return Ok(keydata.key);
                 }
                 StatusCode::ACCEPTED => {
-                    use std::io::Write;
                     print!(".");
                     let _ = std::io::stdout().flush();
                 }

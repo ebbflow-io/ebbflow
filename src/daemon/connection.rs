@@ -121,11 +121,10 @@ pub async fn run_connection(
             return;
         }
     };
-    debug!("Dropping idle permit {:#?}", Instant::now());
     drop(idle_permit);
 
     let (ebbstream, localtcp, now) =
-        match connect_local_with_ebbflow_communication(stream, &args).await {
+        match connect_local_with_ebbflow_communication(stream, &args, message).await {
             Ok(triple) => triple,
             Err(_e) => {
                 trace!("Minimum Delay");
@@ -210,6 +209,7 @@ async fn establish_ebbflow_connection_and_await_traffic_signal(
 async fn connect_local_with_ebbflow_communication(
     mut stream: TlsStream<TcpStream>,
     args: &EndpointConnectionArgs,
+    message: Arc<MessageQueue>,
 ) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     let now = Instant::now();
     // Traffic start, connect local real quick
@@ -225,19 +225,17 @@ async fn connect_local_with_ebbflow_communication(
             localstream
         }
         Err(e) => {
-            info!(
-                "Error connecting to local addr {:?} for {} {:?}",
+            let s = format!(
+                "ERROR: Received traffic but could not connect to local host addr {:?} for {} {:?}",
                 args.local_addr, args.endpoint, e
             );
+            warn!("{}", s);
+            message.add_message(s);
             let response = starttrafficresponse(false)?;
             stream.write_all(&response[..]).await?;
             return Err(e);
         }
     };
-    trace!(
-        "Traffic notification until connected locally {:?}",
-        now.elapsed()
-    );
 
     Ok((stream, local, now))
 }
