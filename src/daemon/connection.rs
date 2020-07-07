@@ -98,8 +98,6 @@ pub async fn run_connection(
                     message.add_message(s);
                     trace!("Bad error delay");
                     jittersleep1p5(BAD_ERROR_DELAY).await;
-                    // We should sleep to avoid spamming, as NotFound and Forbidden errors
-                    // are unlikely to be resolved anytime soon.
                 }
                 _ => {
                     debug!(
@@ -123,7 +121,7 @@ pub async fn run_connection(
     };
     drop(idle_permit);
 
-    let (ebbstream, localtcp, now) =
+    let (ebbstream, localtcp, _now) =
         match connect_local_with_ebbflow_communication(stream, &args, message).await {
             Ok(triple) => triple,
             Err(_e) => {
@@ -138,7 +136,7 @@ pub async fn run_connection(
 
     // We have two connections that are ready to be proxied, lesgo
     meta.add_active();
-    let r = proxy_data(ebbstream, localtcp, &args, receiver, now).await;
+    let r = proxy_data(ebbstream, localtcp, &args, receiver).await;
     meta.remove_active();
     match r {
         Ok(_) => {}
@@ -245,12 +243,12 @@ async fn proxy_data(
     mut local: TcpStream,
     _args: &EndpointConnectionArgs,
     mut receiver: SignalReceiver,
-    start: Instant,
 ) -> Result<(), ConnectionError> {
     // Now we have both, let's create the proxy future, which we can hard-abort
-    let (proxyabortable, handle) = futures::future::abortable(Box::pin(async move {
-        proxy(&mut local, &mut tlsstream, start).await
-    }));
+    let (proxyabortable, handle) =
+        futures::future::abortable(Box::pin(
+            async move { proxy(&mut local, &mut tlsstream).await },
+        ));
 
     match futures::future::select(
         Box::pin(async move { receiver.wait().await }),
@@ -348,15 +346,14 @@ fn starttrafficresponse(good: bool) -> Result<Vec<u8>, ConnectionError> {
 async fn proxy(
     local: &mut TcpStream,
     ebbflow: &mut TlsStream<TcpStream>,
-    start: Instant,
 ) -> Result<(), ConnectionError> {
     let (mut localreader, mut localwriter) = tokio::io::split(local);
     let (mut ebbflowreader, mut ebbflowwriter) = tokio::io::split(ebbflow);
 
     let local2ebb =
-        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter, start).await });
+        Box::pin(async move { copy_bytes_ez(&mut localreader, &mut ebbflowwriter).await });
     let ebb2local =
-        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter, start).await });
+        Box::pin(async move { copy_bytes_ez(&mut ebbflowreader, &mut localwriter).await });
 
     match futures::future::select(local2ebb, ebb2local).await {
         Either::Left((_server_read_res, _c2s_future)) => (),
@@ -366,7 +363,7 @@ async fn proxy(
 }
 
 // ezpzlemonsqueezy
-async fn copy_bytes_ez<R, W>(r: &mut R, w: &mut W, start: Instant) -> Result<(), ConnectionError>
+async fn copy_bytes_ez<R, W>(r: &mut R, w: &mut W) -> Result<(), ConnectionError>
 where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
@@ -376,7 +373,6 @@ where
     loop {
         let n = r.read(&mut buf[0..]).await?;
         if first {
-            trace!("First bytes read elapsed {:?}", start.elapsed());
             first = false;
         }
 

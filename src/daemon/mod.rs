@@ -23,7 +23,7 @@ use tokio_rustls::TlsConnector;
 
 const EBBFLOW_DNS: &str = "s.ebbflow.io";
 const EBBFLOW_PORT: u16 = 443;
-const MAX_IDLE: usize = 100;
+const MAX_IDLE: usize = 1000;
 
 pub struct SharedInfo {
     dns: DnsResolver,
@@ -86,6 +86,7 @@ impl SharedInfo {
             vec![
                 "75.2.87.195".parse().unwrap(),
                 "99.83.181.168".parse().unwrap(),
+                "34.120.207.167".parse().unwrap(),
             ]
         }); // TODO: Update fallbacks
 

@@ -13,12 +13,15 @@ impl MessageQueue {
         }
     }
 
-    pub fn add_message(&self, m: String) {
+    pub fn now() -> String {
         let now = chrono::offset::Utc::now();
         let formatted = now.format("%v %T %Z");
+        formatted.to_string()
+    }
 
+    pub fn add_message(&self, m: String) {
         let mut qq = self.q.write();
-        qq.push_front((formatted.to_string(), m));
+        qq.push_front((Self::now(), m));
         qq.truncate(25);
     }
 

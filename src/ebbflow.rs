@@ -32,7 +32,7 @@ const DEFAULT_EBBFLOW_SITE_ADDR: &str = "https://ebbflow.io/init";
 #[clap(
     version = crate_version!(),
     max_term_width = 120,
-    about = "The command line interface to control the Ebbflow proxy. The proxy runs in the background in the daemon in most cases, and most of the commands are used to modify this daemon.\n\nPlease see https://ebbflow.io/documentation#client for any questions."
+    about = "The command line interface to control the Ebbflow proxy. The proxy runs in the background in the daemon in most cases, and most of the commands are used to modify this daemon.\n\n- General Info:\t\t\thttps://ebbflow.io/documentation#client\n- Troubleshooting Tips: \thttps://ebbflow.io/documentation#troubleshooting\n- Source Code:\t\t\thttps://github.com/ebbflow-io/ebbflow\n\nHINT: \n    `ebbflow status` can be very helpful!"
 )]
 struct Opts {
     #[clap(subcommand)]
@@ -714,7 +714,15 @@ async fn remove_ssh() -> Result<(), CliError> {
     Ok(())
 }
 async fn status() -> Result<(), CliError> {
-    let addr = ebbflow::config::read_addr().await?;
+    let addr = match ebbflow::config::read_addr().await {
+        Ok(a) => a,
+        Err(ConfigError::Empty) | Err(ConfigError::FileNotFound) => {
+            return Err(CliError::Other(
+                "Could not connect to daemon; was unable to determine daemon address".to_string(),
+            ))
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     let status = match reqwest::get(&format!("http://{}/unstable_status", addr)).await {
         Ok(r) => match r.json::<ebbflow::DaemonStatus>().await {
@@ -775,7 +783,7 @@ fn print_status(status: DaemonStatus) {
     }
 
     println!();
-    println!("Daemon Messages");
+    println!("Daemon Messages - Current Time {}", MessageQueue::now());
     println!("-----------------");
     if !status.messages.is_empty() {
         for (timestamp, message) in status.messages {
