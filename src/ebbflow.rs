@@ -114,8 +114,10 @@ struct InitArgs {
 #[derive(Debug, Clap)]
 struct RunBlockingArgs {
     /// The local port, e.g. 80 or 7000
+    #[clap(short, long)]
     port: u16,
     /// The endpoint, e.g. example.com
+    #[clap(short, long)]
     dns: String,
     /// The maximum amount of connections allowed
     #[clap(long)]
@@ -161,9 +163,11 @@ struct SetupSshArgs {
 #[derive(Debug, Clap)]
 struct AddEndpointArgs {
     /// The DNS value of this endpoint
+    #[clap(short, long)]
     dns: String,
     /// The port the local service runs on (NUM)
-    local_port: u16,
+    #[clap(short, long)]
+    port: u16,
     /// the maximum amount of open connections, defaults to 5000 (NUM)
     #[clap(long)]
     maxconns: Option<u16>,
@@ -171,7 +175,7 @@ struct AddEndpointArgs {
     #[clap(long)]
     maxidle: Option<usize>,
     /// provide this if you'd like to initially have this endpoint be disabled
-    #[clap(short, long)]
+    #[clap(long)]
     disabled: bool,
 }
 
@@ -572,7 +576,7 @@ async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
 
 async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
     let newendpoint = Endpoint {
-        port: args.local_port,
+        port: args.port,
         dns: args.dns,
         maxconns: args.maxconns.unwrap_or(5000),
         maxidle: args.maxidle.unwrap_or(40) as u16,
@@ -669,9 +673,7 @@ async fn printconfignokey() -> Result<(), CliError> {
         );
         println!(
             "{:width$}\t{}\t{}\t{}\t\t{}",
-            sshcfg
-                .hostname_override
-                .unwrap_or_else(hostname_or_die),
+            sshcfg.hostname_override.unwrap_or_else(hostname_or_die),
             sshcfg.port,
             sshcfg.enabled,
             sshcfg.maxconns,
@@ -812,6 +814,11 @@ fn print_status_line(endpoint_str: &str, status: DaemonEndpointStatus, max: usiz
 }
 
 async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
+    use tokio::net;
+    for addr in net::lookup_host("localhost:8000").await? {
+        println!("socket address is {}", addr);
+    }
+
     let info = match (args.ebbflow_addr, args.ebbflow_dns) {
         (Some(addr), Some(dns)) => SharedInfo::new_with_ebbflow_overrides(
             addr.parse()
@@ -842,10 +849,9 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
     };
 
     info.update_key(key);
-
-    let address = "127.0.0.1";
-    let ip = address.parse().unwrap();
-    let addr = SocketAddrV4::new(ip, args.port);
+    // let address = "127.0.0.1";
+    // let ip = address.parse().unwrap();
+    // let addr = SocketAddrV4::new(ip, args.port);
 
     spawn_endpoint(
         Arc::new(info),
@@ -854,7 +860,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
             idleconns: args.maxidle.unwrap_or(10) as usize,
             maxconns: args.maxconns.unwrap_or(5_000) as usize,
             endpoint: args.dns,
-            local_addr: addr,
+            local_addr: format!("localhost:{}", args.port),
             message_queue: Arc::new(MessageQueue::new()),
         },
     )

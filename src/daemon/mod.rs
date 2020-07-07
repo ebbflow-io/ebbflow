@@ -114,7 +114,7 @@ pub struct EndpointArgs {
     pub idleconns: usize,
     pub maxconns: usize,
     pub endpoint: String,
-    pub local_addr: SocketAddrV4,
+    pub local_addr: String,
     pub message_queue: Arc<MessageQueue>,
 }
 
@@ -258,7 +258,7 @@ async fn create_args(
     EndpointConnectionArgs {
         endpoint: args.endpoint.clone(),
         key: info.key().unwrap_or_else(|| "unset".to_string()),
-        local_addr: args.local_addr,
+        local_addr: args.local_addr.clone(),
         ctype: args.ctype,
         ebbflow_addr: info.ebbflow_addr().await,
         ebbflow_dns: info.ebbflow_dns(),

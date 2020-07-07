@@ -269,9 +269,7 @@ impl InnerDaemonRunner {
                 let newconfig = SshConfiguration {
                     port: newcfg.port,
                     max: newcfg.maxconns as usize,
-                    hostname: newcfg
-                        .hostname_override
-                        .unwrap_or_else(hostname_or_die),
+                    hostname: newcfg.hostname_override.unwrap_or_else(hostname_or_die),
                     enabled: newcfg.enabled,
                     maxidle: newcfg.maxidle as usize,
                 };
@@ -287,10 +285,7 @@ impl InnerDaemonRunner {
                             idleconns: newconfig.maxidle,
                             maxconns: newconfig.max,
                             endpoint: newconfig.hostname.clone(),
-                            local_addr: SocketAddrV4::new(
-                                Ipv4Addr::new(127, 0, 0, 1),
-                                newconfig.port,
-                            ),
+                            local_addr: format!("localhost:{}", newconfig.port),
                             message_queue: self.message_queue.clone(),
                         };
 
@@ -343,9 +338,6 @@ pub async fn spawn_endpointasdfsfa(
     info: Arc<SharedInfo>,
     message_queue: Arc<MessageQueue>,
 ) -> Arc<EndpointMeta> {
-    let address = "127.0.0.1";
-    let ip = address.parse().unwrap();
-
     let port = e.port;
 
     let idle = e.maxidle;
@@ -356,7 +348,7 @@ pub async fn spawn_endpointasdfsfa(
         idleconns: idle as usize,
         maxconns: e.maxconns as usize,
         endpoint: e.dns,
-        local_addr: SocketAddrV4::new(ip, port),
+        local_addr: format!("localhost:{}", port),
         message_queue,
     };
 

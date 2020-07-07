@@ -183,8 +183,7 @@ impl EbbflowDaemonConfig {
     }
 }
 
-/// An Endpoint to host. Provide the DNS name, and the local port. Optionally override the local address,
-/// which defaults to 127.0.0.1.
+/// An Endpoint to host. Provide the DNS name, and the local port.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Endpoint {
     /// The port your application runs on

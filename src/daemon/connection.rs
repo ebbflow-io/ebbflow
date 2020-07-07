@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::prelude::*;
 use tokio::time::timeout as tokiotimeout;
 use tokio::time::timeout;
@@ -53,7 +53,7 @@ impl From<IoError> for ConnectionError {
 pub struct EndpointConnectionArgs {
     pub endpoint: String,
     pub key: String,
-    pub local_addr: SocketAddrV4,
+    pub local_addr: String,
     pub ctype: EndpointConnectionType,
     pub connector: TlsConnector,
     pub ebbflow_addr: SocketAddrV4,
@@ -211,7 +211,7 @@ async fn connect_local_with_ebbflow_communication(
 ) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     let now = Instant::now();
     // Traffic start, connect local real quick
-    let local = match connect_local(args.local_addr).await {
+    let local = match connect_local(&args.local_addr).await {
         Ok(localstream) => {
             trace!(
                 "Connected to local addr {:?} for {}",
@@ -308,8 +308,8 @@ async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, 
     Ok(Message::from_wire_without_the_length_prefix(&msgbuf[..])?)
 }
 
-async fn connect_local(localaddr: SocketAddrV4) -> Result<TcpStream, ConnectionError> {
-    let tcpstream = tol(TcpStream::connect(localaddr), "connecting to local host").await??;
+async fn connect_local<A: ToSocketAddrs>(a: A) -> Result<TcpStream, ConnectionError> {
+    let tcpstream = tol(TcpStream::connect(a), "connecting to local host").await??;
     tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
     tcpstream.set_nodelay(true)?;
     Ok(tcpstream)
