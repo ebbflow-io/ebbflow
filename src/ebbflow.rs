@@ -373,7 +373,7 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
                     println!("The name {} will be used. Is that ok? (y/yes n/no)", newhn);
 
                     if get_yn()? {
-                        hostname = Some(newhn.to_owned());
+                        hostname = Some(newhn);
                         break;
                     }
                 }
@@ -660,7 +660,7 @@ async fn printconfignokey() -> Result<(), CliError> {
         let max = sshcfg
             .hostname_override
             .clone()
-            .unwrap_or_else(|| hostname_or_die())
+            .unwrap_or_else(hostname_or_die)
             .len();
         println!(
             "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
@@ -671,7 +671,7 @@ async fn printconfignokey() -> Result<(), CliError> {
             "{:width$}\t{}\t{}\t{}\t\t{}",
             sshcfg
                 .hostname_override
-                .unwrap_or_else(|| hostname_or_die()),
+                .unwrap_or_else(hostname_or_die),
             sshcfg.port,
             sshcfg.enabled,
             sshcfg.maxconns,
@@ -820,10 +820,10 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
             ROOTS.clone(),
         )
         .await
-        .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
+        .map_err(|_| CliError::Other("Unable to create data necessary for ".to_string()))?,
         _ => SharedInfo::new()
             .await
-            .map_err(|_| CliError::Other(format!("Unable to create data necessary for ")))?,
+            .map_err(|_| CliError::Other("Unable to create data necessary for ".to_string()))?,
     };
 
     env_logger::builder()

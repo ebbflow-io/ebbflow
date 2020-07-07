@@ -10,7 +10,7 @@ use tokio::io::ErrorKind;
 lazy_static! {
     pub static ref CONFIG_PATH: String = {
         match std::env::var("EBB_CFG_DIR").ok() {
-            Some(p) => p.trim_end_matches("/").to_string(),
+            Some(p) => p.trim_end_matches('/').to_string(),
             None => "/etc/ebbflow".to_string(),
         }
     };

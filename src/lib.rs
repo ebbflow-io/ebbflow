@@ -271,7 +271,7 @@ impl InnerDaemonRunner {
                     max: newcfg.maxconns as usize,
                     hostname: newcfg
                         .hostname_override
-                        .unwrap_or_else(|| hostname_or_die()),
+                        .unwrap_or_else(hostname_or_die),
                     enabled: newcfg.enabled,
                     maxidle: newcfg.maxidle as usize,
                 };
