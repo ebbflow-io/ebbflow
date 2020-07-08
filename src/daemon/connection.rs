@@ -7,12 +7,12 @@ use rand::rngs::SmallRng;
 use rand::Rng;
 use rand::SeedableRng;
 use std::io::Error as IoError;
-use std::net::SocketAddrV4;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::time::timeout as tokiotimeout;
 use tokio::time::timeout;
@@ -21,6 +21,7 @@ use tokio_rustls::TlsConnector;
 
 const LONG_TIMEOUT: Duration = Duration::from_secs(3);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(1_000);
+const SUPER_SHORT_TIMEOUT: Duration = Duration::from_millis(300);
 const KILL_ACTIVE_DELAY: Duration = Duration::from_secs(60);
 const BAD_ERROR_DELAY: Duration = Duration::from_secs(55);
 const MIN_EBBFLOW_ERROR_DELAY: Duration = Duration::from_secs(5);
@@ -36,6 +37,7 @@ enum ConnectionError {
     Forbidden,
     NotFound,
     Shutdown,
+    Multiple(String),
 }
 
 impl From<MessageError> for ConnectionError {
@@ -53,7 +55,7 @@ impl From<IoError> for ConnectionError {
 pub struct EndpointConnectionArgs {
     pub endpoint: String,
     pub key: String,
-    pub local_addr: String,
+    pub addrs: Vec<SocketAddr>,
     pub ctype: EndpointConnectionType,
     pub connector: TlsConnector,
     pub ebbflow_addr: SocketAddrV4,
@@ -211,11 +213,11 @@ async fn connect_local_with_ebbflow_communication(
 ) -> Result<(TlsStream<TcpStream>, TcpStream, Instant), ConnectionError> {
     let now = Instant::now();
     // Traffic start, connect local real quick
-    let local = match connect_local(&args.local_addr).await {
+    let local = match connect_local(&args.addrs).await {
         Ok(localstream) => {
             trace!(
                 "Connected to local addr {:?} for {}",
-                args.local_addr,
+                args.addrs,
                 args.endpoint
             );
             let response = starttrafficresponse(true)?;
@@ -225,7 +227,7 @@ async fn connect_local_with_ebbflow_communication(
         Err(e) => {
             let s = format!(
                 "ERROR: Received traffic but could not connect to local host addr {:?} for {} {:?}",
-                args.local_addr, args.endpoint, e
+                args.addrs, args.endpoint, e
             );
             warn!("{}", s);
             message.add_message(s);
@@ -308,11 +310,31 @@ async fn await_message(tlsstream: &mut TlsStream<TcpStream>) -> Result<Message, 
     Ok(Message::from_wire_without_the_length_prefix(&msgbuf[..])?)
 }
 
-async fn connect_local<A: ToSocketAddrs>(a: A) -> Result<TcpStream, ConnectionError> {
-    let tcpstream = tol(TcpStream::connect(a), "connecting to local host").await??;
-    tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
-    tcpstream.set_nodelay(true)?;
-    Ok(tcpstream)
+async fn connect_local(addrs: &[SocketAddr]) -> Result<TcpStream, ConnectionError> {
+    let mut errors = Vec::new();
+    for a in addrs {
+        match toss(TcpStream::connect(a), "connecting to local host").await {
+            Ok(Ok(tcpstream)) => {
+                tcpstream.set_keepalive(Some(Duration::from_secs(1)))?;
+                tcpstream.set_nodelay(true)?;
+                return Ok(tcpstream);
+            }
+            Ok(Err(e)) => {
+                errors.push((a.clone(), e.into()));
+            }
+            Err(e) => {
+                errors.push((a.clone(), e));
+            }
+        }
+    }
+    Err(ConnectionError::Multiple(format!(
+        "multiple {}",
+        errors
+            .iter()
+            .map(|(a, e)| format!("{:?} - {:?}", a, e))
+            .collect::<Vec<String>>()
+            .join(", ")
+    )))
 }
 
 async fn await_traffic_start(
@@ -390,6 +412,17 @@ where
     T: Future,
 {
     match tokiotimeout(LONG_TIMEOUT, future).await {
+        Ok(r) => Ok(r),
+        Err(_) => Err(ConnectionError::Timeout(msg)),
+    }
+}
+
+/// super short timeout
+async fn toss<T>(future: T, msg: &'static str) -> Result<T::Output, ConnectionError>
+where
+    T: Future,
+{
+    match tokiotimeout(SUPER_SHORT_TIMEOUT, future).await {
         Ok(r) => Ok(r),
         Err(_) => Err(ConnectionError::Timeout(msg)),
     }

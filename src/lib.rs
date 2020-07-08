@@ -13,9 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::net::SocketAddrV4;
 use std::sync::Arc;
-use std::{net::Ipv4Addr, pin::Pin};
+use std::pin::Pin;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 
@@ -285,7 +284,7 @@ impl InnerDaemonRunner {
                             idleconns: newconfig.maxidle,
                             maxconns: newconfig.max,
                             endpoint: newconfig.hostname.clone(),
-                            local_addr: format!("localhost:{}", newconfig.port),
+                            port: newconfig.port,
                             message_queue: self.message_queue.clone(),
                         };
 
@@ -348,7 +347,7 @@ pub async fn spawn_endpointasdfsfa(
         idleconns: idle as usize,
         maxconns: e.maxconns as usize,
         endpoint: e.dns,
-        local_addr: format!("localhost:{}", port),
+        port,
         message_queue,
     };
 

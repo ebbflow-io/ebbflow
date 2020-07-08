@@ -14,7 +14,7 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rustls::{ClientConfig, RootCertStore};
-use std::net::SocketAddrV4;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -114,7 +114,7 @@ pub struct EndpointArgs {
     pub idleconns: usize,
     pub maxconns: usize,
     pub endpoint: String,
-    pub local_addr: String,
+    pub port: u16,
     pub message_queue: Arc<MessageQueue>,
 }
 
@@ -211,6 +211,26 @@ async fn inner_run_endpoint(
     let maxsem = Arc::new(Semaphore::new(args.maxconns));
     let ccfg = Arc::new(ccfg);
 
+    let addrs: Vec<SocketAddr> = loop {
+        match tokio::net::lookup_host(format!("localhost:{}", args.port)).await {
+            Ok(i) => {
+                let mut addrs: Vec<SocketAddr> = i.collect();
+                // prioritize ipv4 addrs
+                addrs.sort_by(|l, r| match (l.is_ipv4(), r.is_ipv4()) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                });
+                break addrs;
+            }
+            Err(e) => {
+                let msg = format!("Extremely unexpected error, could not resolve DNS of localhost, will try again in a second {:?}", e);
+                error!("{}", msg);
+                args.message_queue.add_message(msg);
+                tokio::time::delay_for(Duration::from_secs(1)).await;
+            }
+        }
+    };
     loop {
         let idlesemc = idlesem.clone();
         let maxsemc = maxsem.clone();
@@ -229,10 +249,10 @@ async fn inner_run_endpoint(
         // We have a permit, start a connection
         let receiverc = receiver.clone();
         let messageq = args.message_queue.clone();
-        let args = create_args(&info, &args, ccfg.clone()).await;
+        let args = create_args(&info, &args, &addrs[..], ccfg.clone()).await;
         debug!(
             "Creating new connection for {} (localaddr: {:?})",
-            args.endpoint, args.local_addr
+            args.endpoint, args.addrs
         );
         let m = meta.clone();
         trace!(
@@ -251,6 +271,7 @@ async fn inner_run_endpoint(
 async fn create_args(
     info: &Arc<SharedInfo>,
     args: &EndpointArgs,
+    addrs: &[SocketAddr],
     ccfg: Arc<ClientConfig>,
 ) -> EndpointConnectionArgs {
     let connector = TlsConnector::from(ccfg);
@@ -258,7 +279,7 @@ async fn create_args(
     EndpointConnectionArgs {
         endpoint: args.endpoint.clone(),
         key: info.key().unwrap_or_else(|| "unset".to_string()),
-        local_addr: args.local_addr.clone(),
+        addrs: addrs.to_vec(),
         ctype: args.ctype,
         ebbflow_addr: info.ebbflow_addr().await,
         ebbflow_dns: info.ebbflow_dns(),
