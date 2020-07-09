@@ -245,6 +245,7 @@ impl From<ConfigError> for CliError {
 }
 use clap::derive::FromArgMatches;
 use clap::{derive::IntoApp, AppSettings};
+use tokio::time::delay_for;
 
 #[tokio::main]
 async fn main() {
@@ -403,7 +404,9 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     };
 
     cfg.save_to_file().await?;
-    println!("\nInitialization complete. To set up and endpoint, use `ebbflow config add-endpoint`.");
+    println!(
+        "\nInitialization complete. To set up and endpoint, use `ebbflow config add-endpoint`."
+    );
 
     Ok(())
 }
@@ -445,7 +448,7 @@ async fn poll_key_creation(
     let _ = std::io::stdout().flush();
     let client = reqwest::Client::new();
     loop {
-        tokio::time::delay_for(Duration::from_secs(5)).await;
+        delay_for(Duration::from_secs(5)).await;
         match client
             .post(&format!("{}/hostkeyinit/{}", addr, finalizeme.id))
             .json(&finalizeme)
@@ -461,7 +464,7 @@ async fn poll_key_creation(
                     // Hacky sleep, allows for policies/roles to be attached to this key before we attempt to authenticate
                     // or else we can warm the cache with policy-less/role-less data, and auth will fail, causing pain for the customer.
                     // Yes, this happened in testing!
-                    tokio::time::delay_for(Duration::from_millis(1_500)).await;
+                    delay_for(Duration::from_millis(1_500)).await;
                     return Ok(keydata.key);
                 }
                 StatusCode::ACCEPTED => {
