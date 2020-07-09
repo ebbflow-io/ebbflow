@@ -403,7 +403,7 @@ async fn init_interactive(addr: &str) -> Result<(), CliError> {
     };
 
     cfg.save_to_file().await?;
-    println!("Initialization complete. To set up and endpoint, use `ebbflow config add-endpoint`.");
+    println!("\nInitialization complete. To set up and endpoint, use `ebbflow config add-endpoint`.");
 
     Ok(())
 }
@@ -457,6 +457,11 @@ async fn poll_key_creation(
                     println!();
                     let _ = std::io::stdout().flush();
                     let keydata: KeyData = response.json().await?;
+
+                    // Hacky sleep, allows for policies/roles to be attached to this key before we attempt to authenticate
+                    // or else we can warm the cache with policy-less/role-less data, and auth will fail, causing pain for the customer.
+                    // Yes, this happened in testing!
+                    tokio::time::delay_for(Duration::from_millis(1_500)).await;
                     return Ok(keydata.key);
                 }
                 StatusCode::ACCEPTED => {
