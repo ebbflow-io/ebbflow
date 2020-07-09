@@ -50,7 +50,7 @@ enum SubCommand {
     /// Typically used in container environments.
     /// Use `EBB_KEY` environment variable to pass the key in, or it will fallback to key from init
     RunBlocking(RunBlockingArgs),
-    /// Retrieve the status of the background daemon, helpful in debugging
+    /// Retrieve the status of the background daemon, helpful in debugging (NOTE: Output subject to change)
     Status,
 }
 
@@ -112,19 +112,19 @@ struct InitArgs {
 
 #[derive(Debug, Clap)]
 struct RunBlockingArgs {
-    /// The local port, e.g. 80 or 7000
-    #[clap(short, long)]
-    port: u16,
     /// The endpoint, e.g. example.com
     #[clap(short, long)]
     dns: String,
+    /// The local port, e.g. 80 or 7000
+    #[clap(short, long)]
+    port: u16,
     /// The maximum amount of connections allowed
     #[clap(long)]
     maxconns: Option<u16>,
     /// How many idle connections to keep open
     #[clap(long)]
     maxidle: Option<u16>,
-    /// Log level. Debug, Info, Warn (Default), NOTE: Output is subject to change!!
+    /// Log level. Debug, Info, Warn, Error, (NOTE: Output subject to change)
     #[clap(long)]
     loglevel: Option<LevelFilter>,
     /// This allows you to override the DNS value used to connect to Ebbflow, addr is required as well
@@ -142,16 +142,16 @@ struct EndpointDns {
 
 #[derive(Debug, Clap)]
 struct SetupSshArgs {
-    /// The max number of connections, default 10
-    #[clap(long)]
-    maxconns: Option<u16>,
     /// The port the SSH daemon runs on, default 22
     #[clap(long)]
     port: Option<u16>,
     /// The hostname to use, default is taken from OS
     #[clap(long)]
     hostname: Option<String>,
-    /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    /// The max number of connections, default 20
+    #[clap(long)]
+    maxconns: Option<u16>,
+    /// the maxmimum amount of idle connections to Ebbflow, will be capped
     #[clap(long)]
     maxidle: Option<u16>,
     /// provide this if you'd like to initially have the SSH proxy disabled
@@ -164,13 +164,13 @@ struct AddEndpointArgs {
     /// The DNS value of this endpoint
     #[clap(short, long)]
     dns: String,
-    /// The port the local service runs on (NUM)
+    /// The port the local service runs on
     #[clap(short, long)]
     port: u16,
-    /// the maximum amount of open connections, defaults to 5000 (NUM)
+    /// the maximum amount of open connections, defaults to 5000
     #[clap(long)]
     maxconns: Option<u16>,
-    /// the maxmimum amount of idle connections to Ebbflow, will be capped (NUM)
+    /// the maxmimum amount of idle connections to Ebbflow, will be capped
     #[clap(long)]
     maxidle: Option<usize>,
     /// provide this if you'd like to initially have this endpoint be disabled
@@ -182,7 +182,7 @@ struct AddEndpointArgs {
 struct RemoveEndpointArgs {
     /// The DNS value of the endpoint to remove and shut down.
     dns: String,
-    /// If you want this to succeed in case it didn't exist already,pass this
+    /// If you want this to succeed in case it didn't exist already, pass this
     #[clap(short, long)]
     idempotent: bool,
 }
@@ -252,9 +252,6 @@ async fn main() {
     let app = Opts::into_app();
     let app = app.setting(AppSettings::VersionlessSubcommands);
     let opts: Opts = Opts::from_arg_matches(&app.get_matches());
-    // let addr = opts
-    //     .ebbflow_addr
-    //     .unwrap_or_else(|| DEFAULT_EBBFLOW_API_ADDR.to_string());
     let addr = DEFAULT_EBBFLOW_API_ADDR.to_owned();
 
     let result: Result<(), CliError> = match opts.subcmd {
@@ -448,7 +445,7 @@ async fn poll_key_creation(
     let _ = std::io::stdout().flush();
     let client = reqwest::Client::new();
     loop {
-        delay_for(Duration::from_secs(5)).await;
+        delay_for(Duration::from_secs(8)).await;
         match client
             .post(&format!("{}/hostkeyinit/{}", addr, finalizeme.id))
             .json(&finalizeme)
@@ -464,7 +461,7 @@ async fn poll_key_creation(
                     // Hacky sleep, allows for policies/roles to be attached to this key before we attempt to authenticate
                     // or else we can warm the cache with policy-less/role-less data, and auth will fail, causing pain for the customer.
                     // Yes, this happened in testing!
-                    delay_for(Duration::from_millis(1_500)).await;
+                    delay_for(Duration::from_millis(2_500)).await;
                     return Ok(keydata.key);
                 }
                 StatusCode::ACCEPTED => {
@@ -473,12 +470,12 @@ async fn poll_key_creation(
                 }
                 StatusCode::NOT_FOUND => {}
                 _ => println!(
-                    "Unexpected status code from Ebbflow, weird! {}",
+                    "\tUnexpected status code from Ebbflow, will retry, weird! {}",
                     response.status()
                 ),
             },
             Err(e) => println!(
-                "Error polling key creation, will just retry. For debugging: {:?}",
+                "\tError polling key creation, will just retry. For debugging: {:?}",
                 e
             ),
         }

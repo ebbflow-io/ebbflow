@@ -183,11 +183,7 @@ async fn establish_ebbflow_connection_and_await_traffic_signal(
         },
         _ => return Err(ConnectionError::UnexpectedMessage),
     }
-    debug!(
-        "Awaiting TrafficStart ({}) {:#?}",
-        args.endpoint,
-        Instant::now()
-    );
+    debug!("Awaiting TrafficStart ({})", args.endpoint,);
 
     // Await Connection
     let stream = match futures::future::select(

@@ -13,7 +13,6 @@ use futures::future::BoxFuture;
 use log::LevelFilter;
 use notify::{event::Event, event::EventKind, Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Notify;
 
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::Warn;
@@ -265,13 +264,6 @@ async fn realmain(mut wait: SignalReceiver) -> Result<(), String> {
 
     let runner = run_daemon(sharedinfo, Box::pin(config_reload), notify).await;
     let runnerc = runner.clone();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::time::delay_for(Duration::from_secs(60 * 5)).await;
-            info!("Status\n{:#?}", runner.status().await);
-        }
-    });
 
     // Spawn the server that produces info about the daemon
     tokio::spawn(run_info_server(runnerc));

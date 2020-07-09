@@ -1,4 +1,4 @@
-use crate::DaemonRunner;
+use crate::{config::addr_file_full, DaemonRunner};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 use std::sync::Arc;
@@ -35,7 +35,8 @@ pub async fn run_info_server(runner: Arc<DaemonRunner>) {
 
         if let Err(e) = crate::config::write_addr(&server.local_addr().to_string()).await {
             error!(
-                "Could not write the address of the info server to file {:?}",
+                "Could not write the address of the daemon info server to file {} {:?}",
+                addr_file_full(),
                 e
             );
             tokio::time::delay_for(Duration::from_millis(5_000)).await;

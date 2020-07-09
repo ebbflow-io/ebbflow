@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug)]
 pub enum MessageError {
     Parse,
@@ -126,7 +128,12 @@ impl HelloV0 {
             key,
             endpoint_type: endpoint,
             endpoint_value: e,
-            meta: HashMap::new(),
+            // Important: Never add customer-identifying data or here, privacy is extremely important
+            meta: {
+                let mut map = HashMap::new();
+                map.insert("version".to_string(), VERSION.to_string());
+                map
+            },
         }
     }
 }

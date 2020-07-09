@@ -83,6 +83,7 @@ xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
                             Source='LICENSE'
                             KeyPath='yes'/>
                     </Component>
+                    <!-- Its been annoyingly difficult to figure out how to have config files not be overwritten on updates yet removed on uninstall, so we just write them and don't touch them again -->
                     <!-- <Component Id="DaemonAddrFile" Guid='*' Win64='$(var.Win64)' NeverOverwrite='yes'>
                       <File Id="DaemonAddrFile"
                         Name=".daemonaddr"

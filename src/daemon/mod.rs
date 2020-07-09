@@ -169,12 +169,15 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, mut args: EndpointArgs) -> Ar
     let mut ourreceiver = sender.new_receiver();
     let meta = Arc::new(EndpointMeta::new(sender));
     let metac1 = meta.clone();
-    let metac2 = meta.clone();
     let e = args.endpoint.clone();
+
+    let message_queue = args.message_queue.clone();
 
     args.idleconns = std::cmp::min(args.idleconns, MAX_IDLE);
 
-    const POST_CANCEL_DELAY: Duration = Duration::from_secs(3);
+    let m = format!("Endpoint {} starting up", e);
+    info!("{}", m);
+    message_queue.add_message(m);
 
     tokio::spawn(async move {
         match select(
@@ -184,14 +187,9 @@ pub async fn spawn_endpoint(info: Arc<SharedInfo>, mut args: EndpointArgs) -> Ar
         .await
         {
             Either::Left(_) => {
-                tokio::time::delay_for(POST_CANCEL_DELAY).await;
-                debug!(
-                    "Endpoint {} told to stop, {:?} later current i{} a{}",
-                    e,
-                    POST_CANCEL_DELAY,
-                    metac2.num_idle(),
-                    metac2.num_active()
-                );
+                let m = format!("Endpoint {} shutting down", e);
+                info!("{}", m);
+                message_queue.add_message(m);
             }
             Either::Right(_) => info!("Unreachable? inner_run_endpoint finished"),
         }
@@ -251,7 +249,7 @@ async fn inner_run_endpoint(
         let messageq = args.message_queue.clone();
         let args = create_args(&info, &args, &addrs[..], ccfg.clone()).await;
         debug!(
-            "Creating new connection for {} (localaddr: {:?})",
+            "Creating new connection runner for {} (localaddr: {:?})",
             args.endpoint, args.addrs
         );
         let m = meta.clone();
