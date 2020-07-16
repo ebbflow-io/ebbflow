@@ -35,7 +35,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: BuildRpm
       id: buildrpm
-      uses: ebbflow-io/cargo-rpm-amd64-fedora@master
+      uses: ebbflow-io/cargo-rpm-amd64-fedora@1.1
     - name: Upload RPM Artifact
       uses: actions/upload-artifact@v2
       with:
@@ -49,7 +49,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: BuildRpm
       id: buildrpm
-      uses: ebbflow-io/cargo-rpm-amd64-opensuseleap@master
+      uses: ebbflow-io/cargo-rpm-amd64-opensuseleap@1.0
     - name: Upload RPM Artifact
       uses: actions/upload-artifact@v2
       with:
@@ -63,7 +63,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: BuildDeb
       id: debbuild
-      uses: ebbflow-io/cargo-deb-amd64-ubuntu@master
+      uses: ebbflow-io/cargo-deb-amd64-ubuntu@1.0
     - name: Upload Deb Artifact
       uses: actions/upload-artifact@v2
       with:
@@ -77,7 +77,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: BuildDeb
       id: debbuild
-      uses: ebbflow-io/cargo-deb-armv7-debian@master
+      uses: ebbflow-io/cargo-deb-armv7-debian@1.0
     - name: Upload Deb Artifact
       uses: actions/upload-artifact@v2
       with:
@@ -86,6 +86,8 @@ jobs:
   windowsbuild:
     needs: [build]
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: '-C target-feature=+crt-static'
     name: Windows
     steps:
     - uses: actions/checkout@v2
@@ -135,7 +137,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: StaticBinaryBuild
       id: amd64staticbuild
-      uses: ebbflow-io/cargo-deb-amd64-ubuntu@master
+      uses: ebbflow-io/cargo-deb-amd64-ubuntu@1.0
       with:
         cmd: cargo build --release --target=x86_64-unknown-linux-musl
     - name: Upload Daemon Artifact
@@ -162,7 +164,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: StaticBinaryBuild
       id: armv7statibuild
-      uses: ebbflow-io/cargo-deb-armv7-debian@master
+      uses: ebbflow-io/cargo-deb-armv7-debian@1.0
       with:
         cmd: cargo build --release --target=armv7-unknown-linux-musleabihf
     - name: Upload Daemon Artifact
