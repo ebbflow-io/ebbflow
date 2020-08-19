@@ -7,7 +7,7 @@ Full documentation can be found on the Ebbflow website: [Client Documentation](h
 ebbflow --help
 ```
 
-![Continuous Integration](https://github.com/ebbflow-io/ebbflow/workflows/Continuous%20Integration/badge.svg)
+![Continuous Integration](https://github.com/ebbflow-io/ebbflow/workflows/Continuous%20Integration/badge.svg) ![Docker Image Size (tag)](https://img.shields.io/docker/image-size/ebbflow/ebbflow-client-linux-amd64/latest)
 
 ## Downloading, Updating, and Removing
 
@@ -21,7 +21,7 @@ The client is built, tested, and packaged using the github action workflow confi
 
 As of now, testing is largely manual. The client is tested on various OSs & architectures before being released and vended. In the future, much of this testing could be completed in additional github workflow actions, but that is TBD.
 
-To build the client locally, you can simply fork/clone/download the repo and run `cargo build`, then continuing to execute the binaries manually. To execute with elevated privelages on linux/macos, run `sudo ./target/debug/ebbflow` or `sudo ./target/debug/ebbflowd`.
+To build the client locally, you can simply fork/clone/download the repo and run `cargo build`, then continuing to execute the binaries manually. To execute with elevated privileges on linux/macos, run `sudo ./target/debug/ebbflow` or `sudo ./target/debug/ebbflowd`.
 
 To build the various packages, you need the following tools.
 

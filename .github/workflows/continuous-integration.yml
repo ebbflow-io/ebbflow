@@ -183,8 +183,24 @@ jobs:
       with:
         name: armv7binaries
         path: armv7binaries.zip
+  linuxamd64dockerbuild:
+    needs: [amd64binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/download-artifact@v2
+      - run: cp ./amd64binaries/ebbflow ./docker/
+      - run: chmod +x ./docker/ebbflow
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: ebbflow/ebbflow-client-linux-amd64
+          tags: latest
+          path: ./docker/
   update_release_draft:
-    needs: [quickcheck, arm7binaries, amd64binaries, macosbuild, windowsbuild, raspbianbuild, debbuild, opensuseleaprpmbuild, fedorarpmbuild]
+    needs: [quickcheck, arm7binaries, linuxamd64dockerbuild, amd64binaries, macosbuild, windowsbuild, raspbianbuild, debbuild, opensuseleaprpmbuild, fedorarpmbuild]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2

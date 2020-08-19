@@ -337,7 +337,7 @@ async fn init(addr: &str, args: InitArgs) -> Result<(), CliError> {
     if args.non_interactive {
         let key =
             match std::env::var("EBB_KEY").ok() {
-                Some(k) => k,
+                Some(k) => k.trim().to_string(),
                 None => return Err(CliError::Other(
                     "Environment variable EBB_KEY not provided, required for non-interactive init"
                         .to_owned(),
@@ -839,7 +839,7 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
     let key = match std::env::var("EBB_KEY").ok() {
         Some(k) => {
             debug!("Key passed in");
-            k
+            k.trim().to_string()
         }
         None => {
             debug!("No key passed, trying cfg");
