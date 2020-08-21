@@ -12,7 +12,7 @@ use ebbflow::{
     },
     hostname_or_die,
     messagequeue::MessageQueue,
-    run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatus, DaemonStatusMeta,
+    DaemonEndpointStatus, DaemonRunner, DaemonStatus, DaemonStatusMeta,
 };
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use log::LevelFilter;
@@ -122,8 +122,8 @@ struct InitArgs {
     override_usage = "Either\tebbflow run-blocking --config_file <config_file>\n\tOr\tebbflow run-blocking --dns <dns> --port <port>"
 )]
 struct RunBlockingArgs {
-    /// The location of a file with the ebbflow config, for help see https://ebbflow.io/documentation#config or the client on GitHub.
-    #[clap(name="config_file", env="EBB_CFG_FILE", long, required_unless_all(&["dns", "port"]))]
+    /// The location of a file with the ebbflow config, for help see https://ebbflow.io/documentation#config or the client on GitHub
+    #[clap(name="config_file", env="EBB_CFG_FILE", long, required_unless_all(&["dns", "port"]), display_order=1, next_line_help=true)]
     config_file: Option<String>,
     /// The endpoint, e.g. example.com
     #[clap(
@@ -131,7 +131,9 @@ struct RunBlockingArgs {
         short,
         long,
         required_unless("config_file"),
-        requires("port")
+        requires("port"),
+        display_order = 1,
+        next_line_help = true
     )]
     dns: Option<String>,
     /// The local port, e.g. 80 or 7000
@@ -140,35 +142,37 @@ struct RunBlockingArgs {
         short,
         long,
         required_unless("config_file"),
-        requires("dns")
+        requires("dns"),
+        display_order = 1,
+        next_line_help = true
     )]
     port: Option<u16>,
     /// The maximum amount of connections allowed
-    #[clap(long)]
+    #[clap(long, display_order = 1, next_line_help = true)]
     maxconns: Option<u16>,
     /// How many idle connections to keep open
-    #[clap(long)]
+    #[clap(long, display_order = 1, next_line_help = true)]
     maxidle: Option<u16>,
     /// Log level. Debug, Info, Warn, Error, (NOTE: Output subject to change)
-    #[clap(long)]
+    #[clap(long, display_order = 1, next_line_help = true)]
     loglevel: Option<LevelFilter>,
     /// This allows you to override the DNS value used to connect to Ebbflow, addr is required as well
-    #[clap(long, hidden = true)]
+    #[clap(long, hidden = true, next_line_help = true)]
     ebbflow_dns: Option<String>,
     /// This allows you to override the IP address of Ebbflow, dns is required as well
-    #[clap(long, hidden = true)]
+    #[clap(long, hidden = true, next_line_help = true)]
     ebbflow_addr: Option<String>,
     /// REQUIRED FOR HEALTH CHECKING: the port to check the health of
-    #[clap(long)]
+    #[clap(long, display_order = 2, next_line_help = true)]
     healthcheck_port: Option<u16>,
     /// How many successful health checks must pass to be considered healthy, defaults to 3
-    #[clap(long)]
+    #[clap(long, display_order = 2, next_line_help = true)]
     healthcheck_consider_healthy: Option<u16>,
     /// How many failed health checks must fail to be considered unhealthy, defaults to 3
-    #[clap(long)]
+    #[clap(long, display_order = 2, next_line_help = true)]
     healthcheck_consider_unhealthy: Option<u16>,
     /// How often the health check is ran in seconds, defaults to 5 seconds
-    #[clap(long)]
+    #[clap(long, display_order = 2, next_line_help = true)]
     healthcheck_frequency_secs: Option<u16>,
 }
 
@@ -564,10 +568,6 @@ async fn create_key_request(
     ))
 }
 
-// init
-// status (endpoints and ssh)
-// get config file loc
-
 async fn enabledisable(enable: bool, args: &EnableDisableTarget) -> Result<(bool, bool), CliError> {
     match args {
         EnableDisableTarget::Ssh => set_ssh_enabled(enable).await,
@@ -648,7 +648,6 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
         dns: args.dns,
         maxconns: args.maxconns.unwrap_or(5000),
         maxidle: args.maxidle.unwrap_or(40) as u16,
-        // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
         enabled: !args.disabled,
         healthcheck: hc,
     };
