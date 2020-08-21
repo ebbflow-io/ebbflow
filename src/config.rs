@@ -156,7 +156,11 @@ impl EbbflowDaemonConfig {
     }
 
     pub async fn load_from_file() -> Result<EbbflowDaemonConfig, ConfigError> {
-        let filebytes = fs::read(config_file_full()).await?;
+        Self::load_from_file_path(&config_file_full()).await
+    }
+
+    pub async fn load_from_file_path(p: &str) -> Result<EbbflowDaemonConfig, ConfigError> {
+        let filebytes = fs::read(p).await?;
 
         let parsed: EbbflowDaemonConfig = match serde_yaml::from_slice(&filebytes[..]) {
             Ok(p) => match p {
@@ -171,6 +175,7 @@ impl EbbflowDaemonConfig {
 
         Ok(parsed)
     }
+
     pub async fn save_to_file(&self) -> Result<(), ConfigError> {
         let b: String = match serde_yaml::to_string(self) {
             Ok(s) => s,
@@ -212,7 +217,27 @@ pub struct HealthCheck {
     /// The type of HealthCheck, only `TCP` is available now.
     pub r#type: HealthCheckType,
     /// How often (in seconds) the health check should be evaluated. Defaults to 5.
-    pub frequency_secs: Option<u16>, 
+    pub frequency_secs: Option<u16>,
+}
+
+pub struct ConcreteHealthCheck {
+    pub port: u16,
+    pub consider_healthy_threshold: u16,
+    pub consider_unhealthy_threshold: u16,
+    pub r#type: HealthCheckType,
+    pub frequency_secs: u16,
+}
+
+impl ConcreteHealthCheck {
+    pub fn new(default_port: u16, hc: &HealthCheck) -> Self {
+        Self {
+            port: hc.port.unwrap_or(default_port),
+            consider_healthy_threshold: hc.consider_healthy_threshold.unwrap_or(3),
+            consider_unhealthy_threshold: hc.consider_unhealthy_threshold.unwrap_or(3),
+            frequency_secs: hc.frequency_secs.unwrap_or(5),
+            r#type: hc.r#type.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1,14 +1,17 @@
 pub mod connection;
+pub mod health;
 
 use crate::daemon::connection::{run_connection, EndpointConnectionArgs, EndpointConnectionType};
 use crate::dns::DnsResolver;
 use crate::{
     certs::ROOTS,
+    config::{ConcreteHealthCheck, HealthCheck, HealthCheckType},
     messagequeue::MessageQueue,
     signal::{SignalReceiver, SignalSender},
 };
 use futures::future::select;
 use futures::future::Either;
+use health::HealthMaster;
 use parking_lot::Mutex;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -17,8 +20,11 @@ use rustls::{ClientConfig, RootCertStore};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::Semaphore;
+use std::{collections::VecDeque, time::Duration};
+use tokio::{
+    sync::Semaphore,
+    time::{delay_for, timeout},
+};
 use tokio_rustls::TlsConnector;
 
 const EBBFLOW_DNS: &str = "s.ebbflow.io";
@@ -116,19 +122,30 @@ pub struct EndpointArgs {
     pub endpoint: String,
     pub port: u16,
     pub message_queue: Arc<MessageQueue>,
+    pub healthcheck: Option<HealthCheck>,
 }
 
 pub struct EndpointMeta {
     idle: AtomicUsize,
     active: AtomicUsize,
     stopper: SignalSender,
+    healthdata: Option<Arc<HealthMaster>>,
+}
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HealthOverall {
+    NOT_CONFIGURED,
+    HEALTHY(VecDeque<(bool, u128)>),
+    UNHEALTHY(VecDeque<(bool, u128)>),
 }
 
 impl EndpointMeta {
-    pub fn new(stopper: SignalSender) -> Self {
+    pub fn new(stopper: SignalSender, hm: Option<Arc<HealthMaster>>) -> Self {
         Self {
             idle: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
+            healthdata: hm,
             stopper,
         }
     }
@@ -143,6 +160,20 @@ impl EndpointMeta {
 
     pub fn stop(&self) {
         self.stopper.send_signal();
+    }
+
+    pub fn health(&self) -> HealthOverall {
+        match &self.healthdata {
+            None => HealthOverall::NOT_CONFIGURED,
+            Some(hm) => {
+                let (status, datapoints) = hm.data();
+                if status {
+                    HealthOverall::HEALTHY(datapoints)
+                } else {
+                    HealthOverall::UNHEALTHY(datapoints)
+                }
+            }
+        }
     }
 
     fn add_idle(&self) {
@@ -162,55 +193,202 @@ impl EndpointMeta {
     }
 }
 
-/// This runs this endpoint. To stop it, SEND THE SIGNAL
+/// This runs this endpoint. To stop it, SEND THE SIGNAL.
 pub async fn spawn_endpoint(info: Arc<SharedInfo>, mut args: EndpointArgs) -> Arc<EndpointMeta> {
+    // This sender and receiver are the 'master' sender and receivers that are sent
+    // to us when 'enabled' or 'disabled' is set on the endpoint in the config
     let sender = SignalSender::new();
     let receiver = sender.new_receiver();
-    let mut ourreceiver = sender.new_receiver();
-    let meta = Arc::new(EndpointMeta::new(sender));
+
+    let maybe_hc = match &args.healthcheck {
+        None => None,
+        Some(hc) => {
+            let chc = ConcreteHealthCheck::new(args.port, &hc);
+            Some(Arc::new(HealthMaster::new(chc)))
+        }
+    };
+
+    let meta = Arc::new(EndpointMeta::new(sender, maybe_hc.clone()));
     let metac1 = meta.clone();
-    let e = args.endpoint.clone();
+    let endpoint = args.endpoint.clone();
 
     let message_queue = args.message_queue.clone();
 
     args.idleconns = std::cmp::min(args.idleconns, MAX_IDLE);
 
-    let m = format!("Endpoint {} starting up", e);
+    let m = format!("Endpoint {} is enabled", endpoint);
     info!("{}", m);
     message_queue.add_message(m);
 
+    let conn_addrs = get_addrs(args.port, args.message_queue.clone()).await;
+    let hc_info = match maybe_hc {
+        None => None,
+        Some(hc) => Some((
+            hc.clone(),
+            get_addrs(hc.cfg.port, args.message_queue.clone()).await,
+        )),
+    };
+
+    let e = endpoint.clone();
     tokio::spawn(async move {
-        match select(
-            Box::pin(async move { ourreceiver.wait().await }),
-            Box::pin(async move { inner_run_endpoint(info, args, receiver, metac1).await }),
-        )
-        .await
-        {
-            Either::Left(_) => {
-                let m = format!("Endpoint {} shutting down", e);
-                info!("{}", m);
-                message_queue.add_message(m);
+        loop {
+            // See if we go unhealthy, or the main receiver is done first.
+            let mut r = receiver.clone();
+            match select(
+                Box::pin(async {
+                    await_healthy(&hc_info, &e, &message_queue).await;
+                }),
+                Box::pin(async move { r.wait().await }),
+            )
+            .await
+            {
+                // healthy!
+                Either::Left(_) => (),
+                // We were told to stop, so don't loop
+                Either::Right(_) => {
+                    message_queue
+                        .add_message(format!("Endpoint {} was disabled, shutting down", endpoint));
+                    break;
+                }
             }
-            Either::Right(_) => info!("Unreachable? inner_run_endpoint finished"),
+
+            let m = format!("Endpoint {} starting up", e);
+            info!("{}", m);
+            message_queue.add_message(m);
+            let healthy_connection_sender = SignalSender::new();
+            let mut healthy_connection_receiver_conns1 = healthy_connection_sender.new_receiver();
+            let healthy_connection_receiver_conns2 = healthy_connection_sender.new_receiver();
+
+            let i = info.clone();
+            let m = metac1.clone();
+            let a = args.clone();
+            let ca = conn_addrs.clone();
+            let ee = e.clone();
+            tokio::spawn(async move {
+                match select(
+                    Box::pin(async move { healthy_connection_receiver_conns1.wait().await }),
+                    Box::pin(async move {
+                        inner_run_endpoint(i, a.clone(), healthy_connection_receiver_conns2, m, ca)
+                            .await
+                    }),
+                )
+                .await
+                {
+                    Either::Left(_) => debug!("Endpoint {} is shutting down", &ee),
+                    Either::Right(_) => info!("Unreachable? inner_run_endpoint finished"),
+                }
+            });
+
+            // See if we go unhealthy, or the main receiver is done first.
+            let mut r = receiver.clone();
+            match select(
+                Box::pin(async {
+                    await_unhealthy(&hc_info, &endpoint, &message_queue).await;
+                }),
+                Box::pin(async move { r.wait().await }),
+            )
+            .await
+            {
+                // Unhealthy!
+                Either::Left(_) => (),
+                // We were told to stop, so don't loop
+                Either::Right(_) => {
+                    message_queue
+                        .add_message(format!("Endpoint {} was disabled, shutting down", endpoint));
+                    break;
+                }
+            }
+            // Kill the connections, we are unhealthy
+            healthy_connection_sender.send_signal();
+
+            let m = format!("Endpoint {} shutting down", e);
+            info!("{}", m);
+            message_queue.add_message(m);
         }
+        let m = format!("Endpoint {} is disabled", endpoint);
+        info!("{}", m);
+        message_queue.add_message(m);
     });
+
     meta
 }
 
-async fn inner_run_endpoint(
-    info: Arc<SharedInfo>,
-    args: EndpointArgs,
-    receiver: SignalReceiver,
-    meta: Arc<EndpointMeta>,
+async fn await_healthy(
+    hc: &Option<(Arc<HealthMaster>, Vec<SocketAddr>)>,
+    e: &str,
+    mq: &Arc<MessageQueue>,
 ) {
-    let mut ccfg = ClientConfig::new();
-    ccfg.root_store = info.roots();
-    let idlesem = Arc::new(Semaphore::new(args.idleconns));
-    let maxsem = Arc::new(Semaphore::new(args.maxconns));
-    let ccfg = Arc::new(ccfg);
+    match hc {
+        // Start healthy if no healthcheck
+        None => (),
+        Some((hc, addrs)) => loop {
+            let r = healthcheck(&hc.cfg, addrs, e).await;
 
-    let addrs: Vec<SocketAddr> = loop {
-        match tokio::net::lookup_host(format!("localhost:{}", args.port)).await {
+            if hc.report_check_result(r) {
+                let m = format!("Endpoint {} considered healthy", e);
+                info!("{}", m);
+                mq.add_message(m);
+                return;
+            }
+
+            delay_for(Duration::from_secs(hc.cfg.frequency_secs as u64)).await;
+        },
+    }
+}
+
+async fn await_unhealthy(
+    hc: &Option<(Arc<HealthMaster>, Vec<SocketAddr>)>,
+    e: &str,
+    mq: &Arc<MessageQueue>,
+) {
+    match hc {
+        // Never consider unhealthy if no healthcheck
+        None => futures::future::pending::<()>().await,
+        Some((hc, addrs)) => loop {
+            let r = healthcheck(&hc.cfg, addrs, e).await;
+
+            if !hc.report_check_result(r) {
+                let m = format!("Endpoint {} considered unhealthy", e);
+                info!("{}", m);
+                mq.add_message(m);
+                return;
+            }
+
+            delay_for(Duration::from_secs(hc.cfg.frequency_secs as u64)).await;
+        },
+    }
+}
+
+// Checks both ipv4 and ipv6 addr, if can connect returns true
+async fn healthcheck(hc: &ConcreteHealthCheck, addrs: &Vec<SocketAddr>, e: &str) -> bool {
+    match timeout(Duration::from_secs(1), inner_healthcheck(hc, addrs)).await {
+        Ok(r) => {
+            debug!("{} health check result: {}", e, r);
+            r
+        }
+        Err(_) => {
+            debug!("{} health check timed out and was considered a failure", e);
+            false
+        }
+    }
+}
+
+async fn inner_healthcheck(hc: &ConcreteHealthCheck, addrs: &Vec<SocketAddr>) -> bool {
+    match hc.r#type {
+        HealthCheckType::TCP => {
+            for addr in addrs {
+                if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+async fn get_addrs(port: u16, mq: Arc<MessageQueue>) -> Vec<SocketAddr> {
+    loop {
+        match tokio::net::lookup_host(format!("localhost:{}", port)).await {
             Ok(i) => {
                 let mut addrs: Vec<SocketAddr> = i.collect();
                 // prioritize ipv4 addrs
@@ -224,11 +402,26 @@ async fn inner_run_endpoint(
             Err(e) => {
                 let msg = format!("Extremely unexpected error, could not resolve DNS of localhost, will try again in a second {:?}", e);
                 error!("{}", msg);
-                args.message_queue.add_message(msg);
+                mq.add_message(msg);
                 tokio::time::delay_for(Duration::from_secs(1)).await;
             }
         }
-    };
+    }
+}
+
+async fn inner_run_endpoint(
+    info: Arc<SharedInfo>,
+    args: EndpointArgs,
+    receiver: SignalReceiver,
+    meta: Arc<EndpointMeta>,
+    addrs: Vec<SocketAddr>,
+) {
+    let mut ccfg = ClientConfig::new();
+    ccfg.root_store = info.roots();
+    let idlesem = Arc::new(Semaphore::new(args.idleconns));
+    let maxsem = Arc::new(Semaphore::new(args.maxconns));
+    let ccfg = Arc::new(ccfg);
+
     loop {
         let idlesemc = idlesem.clone();
         let maxsemc = maxsem.clone();

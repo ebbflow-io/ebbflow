@@ -7,6 +7,7 @@ use crate::config::{ConfigError, EbbflowDaemonConfig, Endpoint};
 use crate::daemon::connection::EndpointConnectionType;
 use crate::daemon::EndpointMeta;
 use crate::daemon::{spawn_endpoint, EndpointArgs, SharedInfo};
+use daemon::HealthOverall;
 use futures::future::BoxFuture;
 use messagequeue::MessageQueue;
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,11 @@ pub struct DaemonStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DaemonEndpointStatus {
     Disabled,
-    Enabled { active: usize, idle: usize },
+    Enabled {
+        active: usize,
+        idle: usize,
+        health: Option<HealthOverall>,
+    },
 }
 
 impl DaemonEndpointStatus {
@@ -56,6 +61,7 @@ impl DaemonEndpointStatus {
             EnabledDisabled::Enabled(meta) => DaemonEndpointStatus::Enabled {
                 active: meta.num_active(),
                 idle: meta.num_idle(),
+                health: Some(meta.health()),
             },
         }
     }
@@ -286,6 +292,7 @@ impl InnerDaemonRunner {
                             endpoint: newconfig.hostname.clone(),
                             port: newconfig.port,
                             message_queue: self.message_queue.clone(),
+                            healthcheck: None,
                         };
 
                         let meta = spawn_endpoint(self.info.clone(), args).await;
@@ -349,6 +356,7 @@ pub async fn spawn_endpointasdfsfa(
         endpoint: e.dns,
         port,
         message_queue,
+        healthcheck: e.healthcheck,
     };
 
     spawn_endpoint(info, args).await

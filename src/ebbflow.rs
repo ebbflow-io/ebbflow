@@ -2,13 +2,17 @@
 extern crate log;
 
 use clap::{crate_version, Clap};
-use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh, HealthCheckType};
+use ebbflow::config::{
+    getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, HealthCheck, HealthCheckType, Ssh,
+};
 use ebbflow::{
     certs::ROOTS,
-    daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
+    daemon::{
+        connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, HealthOverall, SharedInfo,
+    },
     hostname_or_die,
     messagequeue::MessageQueue,
-    DaemonEndpointStatus, DaemonStatus, DaemonStatusMeta,
+    run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatus, DaemonStatusMeta,
 };
 use ebbflow_api::generatedmodels::{HostKeyInitContext, HostKeyInitFinalizationContext, KeyData};
 use log::LevelFilter;
@@ -17,6 +21,7 @@ use reqwest::StatusCode;
 use std::io;
 use std::time::Duration;
 use std::{
+    collections::VecDeque,
     fmt::{Display, Formatter},
     io::Error as IoError,
     sync::Arc,
@@ -110,30 +115,33 @@ struct InitArgs {
     non_interactive: bool,
 }
 
-#[derive(Debug, Clap)]
-enum FileSubCommand {
-    File(FileArgs),
-}
-
-#[derive(Debug, Clap)]
-struct FileArgs {
-    /// fully qualified path, or relative path, AND FILENAME, of config file. e.g. /path/to/ebb.yaml, or just ebb.yaml. etc.
-    #[clap(short, long)]
-    path: String,
-}
-
 /// The arguments for the run-blocking command. Provide either --port, --dns, and other options, OR provide --file to point to a config file instead
 #[derive(Debug, Clap)]
 #[clap(setting = AppSettings::SubcommandsNegateReqs)]
+#[clap(
+    override_usage = "Either\tebbflow run-blocking --config_file <config_file>\n\tOr\tebbflow run-blocking --dns <dns> --port <port>"
+)]
 struct RunBlockingArgs {
-    /// The path & filename to a .yaml file for configuration, e.g. /path/to/ebb.yaml or just ebb.yaml if in cwd
-    #[clap(subcommand)]
-    fileconfig: Option<FileSubCommand>,
+    /// The location of a file with the ebbflow config, for help see https://ebbflow.io/documentation#config or the client on GitHub.
+    #[clap(name="config_file", env="EBB_CFG_FILE", long, required_unless_all(&["dns", "port"]))]
+    config_file: Option<String>,
     /// The endpoint, e.g. example.com
-    #[clap(short, long, required=true)]
+    #[clap(
+        name = "dns",
+        short,
+        long,
+        required_unless("config_file"),
+        requires("port")
+    )]
     dns: Option<String>,
     /// The local port, e.g. 80 or 7000
-    #[clap(short, long, required=true)]
+    #[clap(
+        name = "port",
+        short,
+        long,
+        required_unless("config_file"),
+        requires("dns")
+    )]
     port: Option<u16>,
     /// The maximum amount of connections allowed
     #[clap(long)]
@@ -150,6 +158,18 @@ struct RunBlockingArgs {
     /// This allows you to override the IP address of Ebbflow, dns is required as well
     #[clap(long, hidden = true)]
     ebbflow_addr: Option<String>,
+    /// REQUIRED FOR HEALTH CHECKING: the port to check the health of
+    #[clap(long)]
+    healthcheck_port: Option<u16>,
+    /// How many successful health checks must pass to be considered healthy, defaults to 3
+    #[clap(long)]
+    healthcheck_consider_healthy: Option<u16>,
+    /// How many failed health checks must fail to be considered unhealthy, defaults to 3
+    #[clap(long)]
+    healthcheck_consider_unhealthy: Option<u16>,
+    /// How often the health check is ran in seconds, defaults to 5 seconds
+    #[clap(long)]
+    healthcheck_frequency_secs: Option<u16>,
 }
 
 #[derive(Debug, Clap)]
@@ -193,15 +213,19 @@ struct AddEndpointArgs {
     /// provide this if you'd like to initially have this endpoint be disabled
     #[clap(long)]
     disabled: bool,
-    // /// The healthcheck options
-    // #[clap(long)]
-    // healthchecktype: Option<HealthCheckType>,
+    /// REQUIRED FOR HEALTH CHECKING: the port to check the health of
+    #[clap(long)]
+    healthcheck_port: Option<u16>,
+    /// How many successful health checks must pass to be considered healthy, defaults to 3
+    #[clap(long)]
+    healthcheck_consider_healthy: Option<u16>,
+    /// How many failed health checks must fail to be considered unhealthy, defaults to 3
+    #[clap(long)]
+    healthcheck_consider_unhealthy: Option<u16>,
+    /// How often the health check is ran in seconds, defaults to 5 seconds
+    #[clap(long)]
+    healthcheck_frequency_secs: Option<u16>,
 }
-
-// #[derive(Debug, Clap)]
-// struct HealthCheckArgs {
-
-// }
 
 #[derive(Debug, Clap)]
 struct RemoveEndpointArgs {
@@ -296,9 +320,9 @@ async fn main() {
             Config::LogLevel(levelargs) => setloglevel(levelargs).await,
         },
         SubCommand::Init(args) => init(&addr, args).await,
-        SubCommand::RunBlocking(args) if args.fileconfig.is_some() => {
-            todo!("asdfasdfasdf809809")
-        },
+        // SubCommand::RunBlocking(args) if args.file.is_some() => {
+        //     todo!()
+        // }
         SubCommand::RunBlocking(args) => run_blocking(args).await,
         SubCommand::Status => status().await,
     };
@@ -608,6 +632,17 @@ async fn set_ssh_enabled(enabled: bool) -> Result<(bool, bool), CliError> {
 }
 
 async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
+    let hc = match args.healthcheck_port {
+        Some(p) => Some(HealthCheck {
+            frequency_secs: args.healthcheck_frequency_secs,
+            consider_healthy_threshold: args.healthcheck_consider_healthy,
+            consider_unhealthy_threshold: args.healthcheck_consider_unhealthy,
+            r#type: HealthCheckType::TCP,
+            port: Some(p),
+        }),
+        None => None,
+    };
+
     let newendpoint = Endpoint {
         port: args.port,
         dns: args.dns,
@@ -615,7 +650,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
         maxidle: args.maxidle.unwrap_or(40) as u16,
         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
         enabled: !args.disabled,
-        healthcheck: None,
+        healthcheck: hc,
     };
 
     let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
@@ -672,18 +707,30 @@ async fn printconfignokey() -> Result<(), CliError> {
         }
 
         println!(
-            "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\t",
+            "{:width$}\tPort\tEnabled\tMaxConns\tMaxIdleConns\tHealthCheck",
             "DNS",
             width = max
         );
         for e in existing.endpoints {
             println!(
-                "{:width$}\t{}\t{}\t{}\t\t{}",
+                "{:width$}\t{}\t{}\t{}\t\t{}\t\t{}",
                 e.dns,
                 e.port,
                 e.enabled,
                 e.maxconns,
                 e.maxidle,
+                match e.healthcheck {
+                    None => "Not Configured".to_string(),
+                    Some(hc) => {
+                        format!(
+                            "Port {} HealthyThreshold {} UnhealthyThreshold {} FreqSecs {}",
+                            hc.port.unwrap_or(e.port),
+                            hc.consider_healthy_threshold.unwrap_or(3),
+                            hc.consider_unhealthy_threshold.unwrap_or(3),
+                            hc.frequency_secs.unwrap_or(5)
+                        )
+                    }
+                },
                 width = max
             );
         }
@@ -792,12 +839,12 @@ fn print_status(status: DaemonStatus) {
         }
 
         println!(
-            "{:width$}\tEnabled\tCurrActiveConns\tCurrIdleConns\t",
+            "{:width$}\tEnabled\t\tCurrActiveConns\tCurrIdleConns\tHealth",
             "DNS",
             width = max
         );
         for (e, status) in status.endpoints {
-            print_status_line(&e, status, max);
+            print_status_line(&e, status, max, true);
         }
     } else {
         println!("No endpoints known.");
@@ -809,11 +856,11 @@ fn print_status(status: DaemonStatus) {
     if let Some((hostname, status)) = status.ssh {
         let max = hostname.len();
         println!(
-            "{:width$}\tEnabled\tCurrActiveConns\tCurrIdleConns\t",
+            "{:width$}\tEnabled\t\tCurrActiveConns\tCurrIdleConns\t",
             "Hostname",
             width = max
         );
-        print_status_line(&hostname, status, max);
+        print_status_line(&hostname, status, max, false);
     } else {
         println!("SSH configuration not known.");
     }
@@ -830,21 +877,59 @@ fn print_status(status: DaemonStatus) {
     }
 }
 
-fn print_status_line(endpoint_str: &str, status: DaemonEndpointStatus, max: usize) {
-    let (enableddisabled, active, idle) = match status {
-        DaemonEndpointStatus::Disabled => ("Disabled", "".to_string(), "".to_string()),
-        DaemonEndpointStatus::Enabled { active, idle } => {
-            ("Enabled", active.to_string(), idle.to_string())
+// Don't print health if SSH
+fn print_status_line(
+    endpoint_str: &str,
+    status: DaemonEndpointStatus,
+    max: usize,
+    printhealth: bool,
+) {
+    let (enableddisabled, active, idle, health) = match status {
+        DaemonEndpointStatus::Disabled => {
+            ("Disabled", "".to_string(), "".to_string(), "".to_string())
         }
+        DaemonEndpointStatus::Enabled {
+            active,
+            idle,
+            health,
+        } => (
+            "Enabled",
+            active.to_string(),
+            idle.to_string(),
+            if printhealth {
+                match health {
+                    Some(HealthOverall::NOT_CONFIGURED) => "Not Configured".to_string(),
+                    Some(HealthOverall::HEALTHY(data)) => {
+                        format!("Healthy - Old > New: {}", format_health_data_old_new(data))
+                    }
+                    Some(HealthOverall::UNHEALTHY(data)) => format!(
+                        "Unhealthy - Old > New: {}",
+                        format_health_data_old_new(data)
+                    ),
+                    None => "Not Configured".to_string(),
+                }
+            } else {
+                "".to_string()
+            },
+        ),
     };
     println!(
-        "{:width$}\t{}\t{}\t\t{}",
+        "{:width$}\t{}\t\t{}\t\t{}\t\t{}",
         endpoint_str,
         enableddisabled,
         active,
         idle,
+        health,
         width = max
     );
+}
+
+fn format_health_data_old_new(data: VecDeque<(bool, u128)>) -> String {
+    let mut s = "".to_string();
+    for (check, _) in data.iter().rev() {
+        s.push_str(if *check { "1" } else { "0" })
+    }
+    s
 }
 
 async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
@@ -863,34 +948,62 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
     };
 
     env_logger::builder()
-        .filter_level(args.loglevel.unwrap_or(LevelFilter::Warn))
+        .filter_level(args.loglevel.unwrap_or(LevelFilter::Info))
         .filter_module("rustls", log::LevelFilter::Error) // This baby gets noisy at lower levels
         .init();
     let key = match std::env::var("EBB_KEY").ok() {
         Some(k) => {
-            debug!("Key passed in");
+            debug!("EBB_KEY passed in and is being used");
             k.trim().to_string()
         }
         None => {
-            debug!("No key passed, trying cfg");
+            info!("No EBB_KEY env var passed, trying to read from key file");
             getkey().await?
         }
     };
 
-    info.update_key(key);
+    if let Some(cfgfile) = args.config_file {
+        let runner = Arc::new(DaemonRunner::new(Arc::new(info)));
+        let cfg = match EbbflowDaemonConfig::load_from_file_path(cfgfile.trim()).await {
+            Ok(cfg) => cfg,
+            Err(e) => exiterror(&format!(
+                "Error loading the config file you provided, path {} error: {:?}",
+                cfgfile.trim(),
+                e
+            )),
+        };
+        runner.update_config(Some(cfg), Some(key)).await;
+    } else {
+        info.update_key(key);
+        let hc = match args.healthcheck_port {
+            Some(p) => Some(HealthCheck {
+                frequency_secs: args.healthcheck_frequency_secs,
+                consider_healthy_threshold: args.healthcheck_consider_healthy,
+                consider_unhealthy_threshold: args.healthcheck_consider_unhealthy,
+                r#type: HealthCheckType::TCP,
+                port: Some(p),
+            }),
+            None => None,
+        };
 
-    spawn_endpoint(
-        Arc::new(info),
-        EndpointArgs {
-            ctype: EndpointConnectionType::Tls,
-            idleconns: args.maxidle.unwrap_or(10) as usize,
-            maxconns: args.maxconns.unwrap_or(5_000) as usize,
-            endpoint: args.dns.expect("logic error, please report bug to support@ebbflow.io"),
-            port: args.port.expect("logic error, please report bug to support@ebbflow.io"),
-            message_queue: Arc::new(MessageQueue::new()),
-        },
-    )
-    .await;
+        spawn_endpoint(
+            Arc::new(info),
+            EndpointArgs {
+                ctype: EndpointConnectionType::Tls,
+                idleconns: args.maxidle.unwrap_or(10) as usize,
+                maxconns: args.maxconns.unwrap_or(5_000) as usize,
+                endpoint: args
+                    .dns
+                    .expect("logic error, please report bug to support@ebbflow.io"),
+                port: args
+                    .port
+                    .expect("logic error, please report bug to support@ebbflow.io"),
+                message_queue: Arc::new(MessageQueue::new()),
+                healthcheck: hc,
+            },
+        )
+        .await;
+    }
 
     futures::future::pending::<()>().await;
     Ok(())

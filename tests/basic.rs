@@ -7,8 +7,8 @@ mod basic_tests_v0 {
     use crate::mockebb::listen_and_process;
     use crate::mockebb::load_root;
     use ebbflow::{
-        config::{ConfigError, EbbflowDaemonConfig, Endpoint, Ssh},
-        daemon::SharedInfo,
+        config::{ConfigError, EbbflowDaemonConfig, Endpoint, HealthCheck, HealthCheckType, Ssh},
+        daemon::{HealthOverall, SharedInfo},
         run_daemon, DaemonEndpointStatus, DaemonRunner, DaemonStatusMeta,
     };
     use futures::future::BoxFuture;
@@ -18,7 +18,7 @@ mod basic_tests_v0 {
     use tokio::net::TcpStream;
     use tokio::prelude::*;
     use tokio::sync::Mutex;
-    use tokio::sync::Notify;
+    use tokio::{sync::Notify, time::delay_for};
 
     const MOCKEBBSPAWNDELAY: Duration = Duration::from_millis(100);
 
@@ -559,6 +559,7 @@ mod basic_tests_v0 {
                     maxconns: 1000,
                     maxidle: 2,
                     enabled: true,
+                    healthcheck: None,
                 },
                 Endpoint {
                     port: ep1,
@@ -566,6 +567,7 @@ mod basic_tests_v0 {
                     maxconns: 1000,
                     maxidle: 3,
                     enabled: true,
+                    healthcheck: None,
                 },
             ],
             ssh: Some(Ssh {
@@ -590,7 +592,14 @@ mod basic_tests_v0 {
 
         assert_eq!(DaemonStatusMeta::Good, status.meta);
         assert_eq!(
-            Some((hn, DaemonEndpointStatus::Enabled { active: 0, idle: 1 })),
+            Some((
+                hn,
+                DaemonEndpointStatus::Enabled {
+                    active: 0,
+                    idle: 1,
+                    health: Some(HealthOverall::NOT_CONFIGURED),
+                }
+            )),
             status.ssh
         );
 
@@ -600,17 +609,134 @@ mod basic_tests_v0 {
             println!("e {} s {:?}", endpoint, status);
             if e0 == endpoint.as_str() {
                 assert_eq!(
-                    &DaemonEndpointStatus::Enabled { active: 0, idle: 2 },
+                    &DaemonEndpointStatus::Enabled {
+                        active: 0,
+                        idle: 2,
+                        health: Some(HealthOverall::NOT_CONFIGURED),
+                    },
                     status
                 );
             } else if e1 == endpoint.as_str() {
                 assert_eq!(
-                    &DaemonEndpointStatus::Enabled { active: 0, idle: 3 },
+                    &DaemonEndpointStatus::Enabled {
+                        active: 0,
+                        idle: 3,
+                        health: Some(HealthOverall::NOT_CONFIGURED),
+                    },
                     status
                 );
             } else {
                 panic!("unexpected")
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn health_check_starts_up_single_connection_different_port() {
+        // logger();
+        let testclientport = 35001;
+        let customerport = 35002;
+        let serverport: usize = 35003;
+        let healthcheckport: usize = 35004;
+
+        tokio::spawn(listen_and_process(customerport, testclientport));
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned ebb");
+
+        let (_notify, _arcmutex, _) = start_basic_daemon(
+            testclientport,
+            EbbflowDaemonConfig {
+                endpoints: vec![Endpoint {
+                    port: serverport as u16,
+                    dns: "ebbflow.io".to_string(),
+                    maxconns: 1000,
+                    maxidle: 1,
+                    enabled: true,
+                    healthcheck: Some(HealthCheck {
+                        port: Some(healthcheckport as u16),
+                        consider_healthy_threshold: None,
+                        consider_unhealthy_threshold: None,
+                        r#type: HealthCheckType::TCP,
+                        frequency_secs: Some(2),
+                    }),
+                }],
+                ssh: None,
+                loglevel: None,
+            },
+        )
+        .await;
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        info!("Spawned daemon");
+
+        // the health check server is a diff port to make it easy
+        tokio::spawn(async move {
+            spawn_healthy_tcplistener(healthcheckport).await.unwrap();
+        });
+
+        let serverconnhandle = tokio::spawn(get_one_proxied_connection(serverport));
+        info!("Spawned server");
+
+        tokio::time::delay_for(Duration::from_secs(3)).await;
+
+        // Here we should fail for a few seconds (6)
+        // We should not be able to connect
+        let should_err = {
+            match TcpStream::connect(format!("127.0.0.1:{}", customerport)).await {
+                Ok(mut s) => {
+                    info!("Connected Client");
+                    tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+                    // We should be disconnected soon, or not be able to write
+                    let _r = s.write(&[0; 4][..]).await;
+                    info!("Wrote Customer Stuff");
+                    let mut buf = vec![0; 10];
+                    let r = s.read(&mut buf[..]).await;
+                    info!("Read Customer Stuff {:?}", r);
+                    if let Ok(0) = r {
+                        Err(std::io::Error::from(std::io::ErrorKind::NotConnected))
+                    } else {
+                        r
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        };
+        assert!(should_err.is_err());
+
+        // Now we should be good!
+        tokio::time::delay_for(Duration::from_secs(7)).await;
+
+        tokio::time::delay_for(MOCKEBBSPAWNDELAY).await;
+        let mut customer = TcpStream::connect(format!("127.0.0.1:{}", customerport))
+            .await
+            .unwrap();
+        info!("Connected");
+
+        let mut server = serverconnhandle.await.unwrap().unwrap();
+
+        // at this point, we have the customer conn and server conn, let's send some bytes.
+        let writeme: [u8; 102] = [1; 102];
+        customer.write_all(&writeme[..]).await.unwrap();
+        info!("Wrote Customer Stuff");
+
+        let mut readme: [u8; 102] = [0; 102];
+        server.read_exact(&mut readme[..]).await.unwrap();
+        info!("Read Server Stuff");
+
+        assert_eq!(readme[..], writeme[..]);
+    }
+
+    async fn spawn_healthy_tcplistener(port: usize) -> Result<TcpStream, std::io::Error> {
+        let mut listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
+
+        loop {
+            let (socket, _) = listener.accept().await?;
+            info!("Got a connection, shoving it to another task for a second then killing it");
+            tokio::spawn(async move {
+                delay_for(Duration::from_secs(1)).await;
+                drop(socket);
+            });
         }
     }
 
@@ -658,6 +784,7 @@ mod basic_tests_v0 {
                 maxconns: 1000,
                 maxidle: 1,
                 enabled: true,
+                healthcheck: None,
             }],
             ssh: None,
             loglevel: None,

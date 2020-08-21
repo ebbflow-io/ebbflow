@@ -8,7 +8,7 @@ use log::LevelFilter;
 
 #[tokio::main]
 async fn main() {
-    env_logger::builder().filter_level(LevelFilter::Warn).init();
+    env_logger::builder().filter_level(LevelFilter::Info).init();
 
     // Construct our SocketAddr to listen on...
     let addr = ([127, 0, 0, 1], 8080).into();
