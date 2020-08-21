@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::{fs::OpenOptions, net::SocketAddrV4};
 use tokio::fs;
 use tokio::fs::OpenOptions as TokioOpenOptions;
@@ -196,6 +197,38 @@ pub struct Endpoint {
     pub maxidle: u16,
     /// Is this endpoint enabled or disabled?
     pub enabled: bool,
+    /// Health Check, will automatically Enable and Disable based on pass/fail
+    pub healthcheck: Option<HealthCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HealthCheck {
+    /// The port to health check, defaults to the Endpoint's port.
+    pub port: Option<u16>,
+    /// How many successes before we consider this healthy? Defaults to 3.
+    pub consider_healthy_threshold: Option<u16>,
+    /// How many failures until we consider this unhealthy? Defaults to 3.
+    pub consider_unhealthy_threshold: Option<u16>,
+    /// The type of HealthCheck, only `TCP` is available now.
+    pub r#type: HealthCheckType,
+    /// How often (in seconds) the health check should be evaluated. Defaults to 5.
+    pub frequency_secs: Option<u16>, 
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HealthCheckType {
+    /// Just a simple TCP Connection, no data transfer only connect
+    TCP,
+}
+
+impl FromStr for HealthCheckType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().trim() {
+            "tcp" => Ok(HealthCheckType::TCP),
+            _ => Err(format!("Could not parse {} into a HealthCheckType", s)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

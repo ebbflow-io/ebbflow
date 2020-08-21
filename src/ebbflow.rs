@@ -2,7 +2,7 @@
 extern crate log;
 
 use clap::{crate_version, Clap};
-use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh};
+use ebbflow::config::{getkey, setkey, ConfigError, EbbflowDaemonConfig, Endpoint, Ssh, HealthCheckType};
 use ebbflow::{
     certs::ROOTS,
     daemon::{connection::EndpointConnectionType, spawn_endpoint, EndpointArgs, SharedInfo},
@@ -111,13 +111,30 @@ struct InitArgs {
 }
 
 #[derive(Debug, Clap)]
+enum FileSubCommand {
+    File(FileArgs),
+}
+
+#[derive(Debug, Clap)]
+struct FileArgs {
+    /// fully qualified path, or relative path, AND FILENAME, of config file. e.g. /path/to/ebb.yaml, or just ebb.yaml. etc.
+    #[clap(short, long)]
+    path: String,
+}
+
+/// The arguments for the run-blocking command. Provide either --port, --dns, and other options, OR provide --file to point to a config file instead
+#[derive(Debug, Clap)]
+#[clap(setting = AppSettings::SubcommandsNegateReqs)]
 struct RunBlockingArgs {
+    /// The path & filename to a .yaml file for configuration, e.g. /path/to/ebb.yaml or just ebb.yaml if in cwd
+    #[clap(subcommand)]
+    fileconfig: Option<FileSubCommand>,
     /// The endpoint, e.g. example.com
-    #[clap(short, long)]
-    dns: String,
+    #[clap(short, long, required=true)]
+    dns: Option<String>,
     /// The local port, e.g. 80 or 7000
-    #[clap(short, long)]
-    port: u16,
+    #[clap(short, long, required=true)]
+    port: Option<u16>,
     /// The maximum amount of connections allowed
     #[clap(long)]
     maxconns: Option<u16>,
@@ -176,7 +193,15 @@ struct AddEndpointArgs {
     /// provide this if you'd like to initially have this endpoint be disabled
     #[clap(long)]
     disabled: bool,
+    // /// The healthcheck options
+    // #[clap(long)]
+    // healthchecktype: Option<HealthCheckType>,
 }
+
+// #[derive(Debug, Clap)]
+// struct HealthCheckArgs {
+
+// }
 
 #[derive(Debug, Clap)]
 struct RemoveEndpointArgs {
@@ -251,6 +276,7 @@ use tokio::time::delay_for;
 async fn main() {
     let app = Opts::into_app();
     let app = app.setting(AppSettings::VersionlessSubcommands);
+    let app = app.setting(AppSettings::SubcommandsNegateReqs);
     let opts: Opts = Opts::from_arg_matches(&app.get_matches());
     let addr = DEFAULT_EBBFLOW_API_ADDR.to_owned();
 
@@ -270,6 +296,9 @@ async fn main() {
             Config::LogLevel(levelargs) => setloglevel(levelargs).await,
         },
         SubCommand::Init(args) => init(&addr, args).await,
+        SubCommand::RunBlocking(args) if args.fileconfig.is_some() => {
+            todo!("asdfasdfasdf809809")
+        },
         SubCommand::RunBlocking(args) => run_blocking(args).await,
         SubCommand::Status => status().await,
     };
@@ -586,6 +615,7 @@ async fn add_endpoint(args: AddEndpointArgs) -> Result<(), CliError> {
         maxidle: args.maxidle.unwrap_or(40) as u16,
         // address: args.address_override.unwrap_or_else(|| "127.0.0.1".to_string()),
         enabled: !args.disabled,
+        healthcheck: None,
     };
 
     let mut existing = EbbflowDaemonConfig::load_from_file_or_new().await?;
@@ -855,8 +885,8 @@ async fn run_blocking(args: RunBlockingArgs) -> Result<(), CliError> {
             ctype: EndpointConnectionType::Tls,
             idleconns: args.maxidle.unwrap_or(10) as usize,
             maxconns: args.maxconns.unwrap_or(5_000) as usize,
-            endpoint: args.dns,
-            port: args.port,
+            endpoint: args.dns.expect("logic error, please report bug to support@ebbflow.io"),
+            port: args.port.expect("logic error, please report bug to support@ebbflow.io"),
             message_queue: Arc::new(MessageQueue::new()),
         },
     )
