@@ -13,7 +13,8 @@ ebbflow --help
 
 Please visit Ebbflow's [client documentation](https://ebbflow.io/documentation#client) for up to date instructions on installing and managing the client:
 
-https://ebbflow.io/documentation#client
+- Docs: https://ebbflow.io/documentation#client
+- RaspberryPi Guide: https://ebbflow.io/guides/raspberrypi
 
 ## Building & Testing
 
