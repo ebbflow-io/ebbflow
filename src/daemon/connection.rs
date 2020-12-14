@@ -102,10 +102,12 @@ pub async fn run_connection(
                     jittersleep1p5(BAD_ERROR_DELAY).await;
                 }
                 _ => {
-                    debug!(
+                    let s = format!(
                         "Failed to connect to Ebbflow for endpoint {} failed due to {:?}",
                         args.endpoint, e
                     );
+                    warn!("{}", s);
+                    message.add_message(s);
                 }
             }
             trace!("Minimum Delay");
