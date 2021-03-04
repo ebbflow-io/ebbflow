@@ -13,7 +13,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: BuildRpm
       id: buildrpm
-      uses: ebbflow-io/cargo-rpm-amd64-opensuseleap@master
+      uses: ebbflow-io/cargo-rpm-amd64-opensuseleap@1.50.0
       with:
         dockertag: latest
     - name: Upload RPM Artifact
